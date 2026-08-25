@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -9,9 +10,13 @@ import 'package:pdf_maker/features/photo_to_pdf/domain/models/photo_item.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/controllers/photo_to_pdf_controller.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/widgets/draggable_photo_card.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/widgets/layout_selector.dart';
-import 'package:pdf_maker/features/photo_to_pdf/presentation/widgets/page_grid_arrangement_view.dart';
-import 'package:pdf_maker/features/photo_to_pdf/presentation/screens/page_setup_modal.dart';
+import 'package:pdf_maker/features/photo_to_pdf/presentation/widgets/photo_arrangement_view.dart';
+import 'package:pdf_maker/features/photo_to_pdf/presentation/modals/page_setup_modal.dart';
+import 'package:pdf_maker/features/photo_to_pdf/presentation/modals/overlay_settings_modal.dart';
+import 'package:pdf_maker/features/photo_to_pdf/presentation/modals/template_manager_modal.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/screens/pdf_preview_screen.dart';
+
+import 'package:pdf_maker/features/photo_to_pdf/domain/models/pdf_export_config.dart';
 
 class PhotoArrangerScreen extends ConsumerStatefulWidget {
   const PhotoArrangerScreen({super.key});
@@ -22,6 +27,19 @@ class PhotoArrangerScreen extends ConsumerStatefulWidget {
 
 class _PhotoArrangerScreenState extends ConsumerState<PhotoArrangerScreen> {
   bool _showPageLayoutView = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedDefaults();
+  }
+
+  Future<void> _loadSavedDefaults() async {
+    final savedConfig = await PdfExportConfig.loadFromPreferences();
+    if (mounted) {
+      ref.read(photoToPdfProvider.notifier).updateConfig(savedConfig);
+    }
+  }
 
   Future<void> _handleCropPhoto(PhotoItem item) async {
     try {
@@ -153,52 +171,99 @@ class _PhotoArrangerScreenState extends ConsumerState<PhotoArrangerScreen> {
   }
 
   Future<void> _startPdfGeneration() async {
+    final state = ref.read(photoToPdfProvider);
     final controller = ref.read(photoToPdfProvider.notifier);
-    final bytes = await controller.generatePdf();
 
-    if (!mounted) return;
-
-    if (bytes != null) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const PdfPreviewScreen(),
+    // Suggestion 24: Show confirmation dialog if one or more photos were auto-downscaled
+    final downscaledCount = state.autoDownscaledCount;
+    if (downscaledCount > 0) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Auto-Resized Photos Detected'),
+          content: Text(
+            '$downscaledCount photo(s) exceeded the 50 MB decoded limit and were automatically downscaled for optimal performance. Do you want to proceed with generating the PDF?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Proceed'),
+            ),
+          ],
         ),
       );
-    } else {
-      final error = ref.read(photoToPdfProvider).errorMessage;
-      if (error != null) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Row(
-              children: [
-                const Icon(Icons.error_outline_rounded, color: AppColors.error),
-                const SizedBox(width: 8),
-                Text(
-                  'Generation Failed',
-                  style: GoogleFonts.sora(fontWeight: FontWeight.bold, fontSize: 18),
+      if (proceed != true) return;
+    }
+
+    // Suggestion 30: Screen Orientation Lock during generation
+    try {
+      final isLandscape = mounted && MediaQuery.of(context).orientation == Orientation.landscape;
+      await SystemChrome.setPreferredOrientations([
+        isLandscape ? DeviceOrientation.landscapeLeft : DeviceOrientation.portraitUp,
+      ]);
+    } catch (_) {}
+
+    try {
+      final bytes = await controller.generatePdf();
+
+      if (!mounted) return;
+
+      if (bytes != null) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const PdfPreviewScreen(),
+          ),
+        );
+      } else if (!state.isCancelled) {
+        final error = ref.read(photoToPdfProvider).errorMessage;
+        if (error != null) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, color: AppColors.error),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Generation Failed',
+                    style: GoogleFonts.sora(fontWeight: FontWeight.bold, fontSize: 18),
+                  ),
+                ],
+              ),
+              content: Text(error),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Dismiss'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _startPdfGeneration();
+                  },
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
                 ),
               ],
             ),
-            content: Text(error),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Dismiss'),
-              ),
-              ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _startPdfGeneration();
-                },
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Retry'),
-              ),
-            ],
-          ),
-        );
+          );
+        }
       }
+    } finally {
+      // Restore orientation setting (Suggestion 30)
+      try {
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      } catch (_) {}
     }
   }
 
@@ -229,6 +294,38 @@ class _PhotoArrangerScreenState extends ConsumerState<PhotoArrangerScreen> {
             icon: const Icon(Icons.redo_rounded),
             tooltip: 'Redo',
             onPressed: state.canRedo ? () => controller.redo() : null,
+          ),
+          IconButton(
+            icon: const Icon(Icons.bookmark_outline_rounded),
+            tooltip: 'Templates',
+            onPressed: () {
+              final state = ref.read(photoToPdfProvider);
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (ctx) => TemplateManagerModal(
+                  currentConfig: state.config,
+                  onApplyTemplate: (cfg) => ref.read(photoToPdfProvider.notifier).updateConfig(cfg),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.layers_outlined),
+            tooltip: 'Overlay Settings',
+            onPressed: () {
+              final state = ref.read(photoToPdfProvider);
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (ctx) => OverlaySettingsModal(
+                  initialConfig: state.config,
+                  onSave: (cfg) => ref.read(photoToPdfProvider.notifier).updateConfig(cfg),
+                ),
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.tune_rounded),
@@ -410,31 +507,34 @@ class _PhotoArrangerScreenState extends ConsumerState<PhotoArrangerScreen> {
                     ],
                     Row(
                       children: [
-                        OutlinedButton.icon(
-                          onPressed: state.isLoading
-                              ? null
-                              : () => controller.pickPhotosFromGallery(),
-                          icon: const Icon(Icons.add_photo_alternate_outlined),
-                          label: const Text('Add More'),
-                          style: OutlinedButton.styleFrom(minimumSize: const Size(120, 52)),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: state.isLoading ? null : _startPdfGeneration,
-                            icon: state.isLoading
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.picture_as_pdf_rounded),
-                            label: Text(state.isLoading ? 'Generating…' : 'Generate PDF'),
+                        if (state.isLoading) ...[
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => controller.cancelPdfGeneration(),
+                              icon: const Icon(Icons.cancel_outlined, color: AppColors.error),
+                              label: const Text('Cancel', style: TextStyle(color: AppColors.error)),
+                              style: OutlinedButton.styleFrom(
+                                side: const BorderSide(color: AppColors.error),
+                                minimumSize: const Size(120, 52),
+                              ),
+                            ),
                           ),
-                        ),
+                        ] else ...[
+                          OutlinedButton.icon(
+                            onPressed: () => controller.pickPhotosFromGallery(),
+                            icon: const Icon(Icons.add_photo_alternate_outlined),
+                            label: const Text('Add More'),
+                            style: OutlinedButton.styleFrom(minimumSize: const Size(120, 52)),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: _startPdfGeneration,
+                              icon: const Icon(Icons.picture_as_pdf_rounded),
+                              label: const Text('Generate PDF'),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],

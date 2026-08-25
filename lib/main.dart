@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
-import 'features/history_and_settings/services/settings_service.dart';
+import 'features/settings/services/settings_service.dart';
 import 'features/home/presentation/home_screen.dart';
 
 void main() async {

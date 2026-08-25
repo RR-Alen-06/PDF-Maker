@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:path/path.dart' as p;
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
-import 'package:pdf_maker/features/history_and_settings/services/history_storage_service.dart';
-import 'package:pdf_maker/features/tools/pdf_manipulation/services/pdf_manipulation_service.dart';
+import 'package:pdf_maker/features/history/services/history_storage_service.dart';
+import 'package:pdf_maker/features/tools/pdf_manipulation/services/pdf_operations_service.dart';
 
 class PdfSplitScreen extends StatefulWidget {
   const PdfSplitScreen({super.key});
@@ -17,8 +19,10 @@ class PdfSplitScreen extends StatefulWidget {
 class _PdfSplitScreenState extends State<PdfSplitScreen> {
   String? _selectedPdfPath;
   int _totalPageCount = 0;
-  final TextEditingController _rangeController = TextEditingController();
+  int _fromPage = 1;
+  int _toPage = 1;
   bool _isSplitting = false;
+  File? _savedFile;
 
   Future<void> _pickPdf() async {
     final files = await FilePicker.pickFiles(
@@ -35,48 +39,27 @@ class _PdfSplitScreenState extends State<PdfSplitScreen> {
       setState(() {
         _selectedPdfPath = path;
         _totalPageCount = count;
-        _rangeController.text = '1-$count';
+        _fromPage = 1;
+        _toPage = count > 0 ? count : 1;
+        _savedFile = null;
       });
     }
   }
 
-  List<int> _parsePageRange(String input, int maxPages) {
-    final Set<int> pageSet = {};
-    final segments = input.split(',');
-    for (final seg in segments) {
-      final trimmed = seg.trim();
-      if (trimmed.contains('-')) {
-        final parts = trimmed.split('-');
-        final start = int.tryParse(parts[0].trim());
-        final end = int.tryParse(parts[1].trim());
-        if (start != null && end != null) {
-          for (int i = start; i <= end; i++) {
-            if (i >= 1 && i <= maxPages) pageSet.add(i);
-          }
-        }
-      } else {
-        final single = int.tryParse(trimmed);
-        if (single != null && single >= 1 && single <= maxPages) {
-          pageSet.add(single);
-        }
-      }
-    }
-    final sorted = pageSet.toList()..sort();
-    return sorted;
-  }
+  bool get _isSinglePage => _totalPageCount <= 1;
+  bool get _hasInvalidRange => _fromPage > _toPage || _isSinglePage;
 
   Future<void> _splitPdf() async {
-    if (_selectedPdfPath == null) return;
-    final pages = _parsePageRange(_rangeController.text, _totalPageCount);
-    if (pages.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please specify valid page numbers within range'),
-          backgroundColor: AppColors.error,
-        ),
-      );
-      return;
+    if (_selectedPdfPath == null || _hasInvalidRange) return;
+
+    final pages = <int>[];
+    for (int i = _fromPage; i <= _toPage; i++) {
+      if (i >= 1 && i <= _totalPageCount) {
+        pages.add(i);
+      }
     }
+
+    if (pages.isEmpty) return;
 
     setState(() => _isSplitting = true);
     try {
@@ -85,7 +68,8 @@ class _PdfSplitScreenState extends State<PdfSplitScreen> {
         pageNumbers: pages,
       );
 
-      final fileName = FileUtils.generateDefaultFileName(prefix: 'Extracted_Pages');
+      final originalName = p.basenameWithoutExtension(_selectedPdfPath!);
+      final fileName = '${originalName}_p$_fromPage-p$_toPage.pdf';
       final file = await FileUtils.savePdfFile(bytes: bytes, fileName: fileName);
 
       final history = HistoryStorageService();
@@ -96,12 +80,15 @@ class _PdfSplitScreenState extends State<PdfSplitScreen> {
         pageCount: pages.length,
       );
 
-      setState(() => _isSplitting = false);
+      setState(() {
+        _savedFile = file;
+        _isSplitting = false;
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Extracted ${pages.length} page(s) successfully!'),
+            content: Text('Extracted $fileName (${pages.length} pages)'),
             backgroundColor: AppColors.success,
             action: SnackBarAction(
               label: 'Open',
@@ -127,7 +114,17 @@ class _PdfSplitScreenState extends State<PdfSplitScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Split PDF')),
+      appBar: AppBar(
+        title: const Text('Split PDF'),
+        actions: [
+          if (_savedFile != null)
+            IconButton(
+              icon: const Icon(Icons.share_outlined),
+              tooltip: 'Share Extracted PDF',
+              onPressed: () => FileUtils.sharePdf(_savedFile!.path),
+            ),
+        ],
+      ),
       body: _selectedPdfPath == null
           ? Center(
               child: Padding(
@@ -148,13 +145,13 @@ class _PdfSplitScreenState extends State<PdfSplitScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    const Text(
+                    Text(
                       'Extract Specific Pages',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      style: GoogleFonts.sora(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Pick a PDF and extract any page range (e.g. 1-3, 5, 8-10) into a new document.',
+                      'Select a PDF and choose a page range (From page / To page) to extract into a new document.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey),
                     ),
@@ -174,10 +171,11 @@ class _PdfSplitScreenState extends State<PdfSplitScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Card(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                     child: ListTile(
                       leading: const Icon(Icons.description_rounded, color: AppColors.primary),
                       title: Text(
-                        _selectedPdfPath!.split(Platform.pathSeparator).last,
+                        p.basename(_selectedPdfPath!),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.bold),
@@ -190,23 +188,128 @@ class _PdfSplitScreenState extends State<PdfSplitScreen> {
                     ),
                   ),
                   const SizedBox(height: 20),
-                  const Text(
-                    'Page Range to Extract',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _rangeController,
-                    decoration: InputDecoration(
-                      hintText: 'e.g. 1-3, 5, 7',
-                      helperText: 'Enter comma-separated page numbers or ranges (1 to $_totalPageCount)',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                      prefixIcon: const Icon(Icons.format_list_numbered_rounded),
+
+                  // Range Selectors (From page / To page, each 1 to N)
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: _hasInvalidRange
+                            ? AppColors.error
+                            : Theme.of(context).dividerColor.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Page Range Selector',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            // From Page
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('From Page', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                  const SizedBox(height: 6),
+                                  DropdownButtonFormField<int>(
+                                    initialValue: _fromPage,
+                                    decoration: InputDecoration(
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    ),
+                                    items: List.generate(_totalPageCount, (i) => i + 1).map((pageVal) {
+                                      return DropdownMenuItem(value: pageVal, child: Text('Page $pageVal'));
+                                    }).toList(),
+                                    onChanged: (val) {
+                                      if (val != null) setState(() => _fromPage = val);
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            // To Page
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('To Page', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                  const SizedBox(height: 6),
+                                  DropdownButtonFormField<int>(
+                                    initialValue: _toPage,
+                                    decoration: InputDecoration(
+                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    ),
+                                    items: List.generate(_totalPageCount, (i) => i + 1).map((pageVal) {
+                                      return DropdownMenuItem(value: pageVal, child: Text('Page $pageVal'));
+                                    }).toList(),
+                                    onChanged: (val) {
+                                      if (val != null) setState(() => _toPage = val);
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        // Inline validation message
+                        if (_isSinglePage) ...[
+                          const SizedBox(height: 12),
+                          const Row(
+                            children: [
+                              Icon(Icons.info_outline_rounded, color: AppColors.tertiary, size: 16),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Splitting requires a PDF with at least 2 pages.',
+                                  style: TextStyle(
+                                    color: AppColors.tertiary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ] else if (_fromPage > _toPage) ...[
+                          const SizedBox(height: 12),
+                          const Row(
+                            children: [
+                              Icon(Icons.error_outline_rounded, color: AppColors.error, size: 16),
+                              SizedBox(width: 6),
+                              Text(
+                                'Start page must be ≤ end page',
+                                style: TextStyle(
+                                  color: AppColors.error,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ] else ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            'Will extract ${_toPage - _fromPage + 1} page(s) into: ${p.basenameWithoutExtension(_selectedPdfPath!)}_p$_fromPage-p$_toPage.pdf',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
+
                   const Spacer(),
                   ElevatedButton.icon(
-                    onPressed: _isSplitting ? null : _splitPdf,
+                    onPressed: _isSplitting || _hasInvalidRange ? null : _splitPdf,
                     icon: _isSplitting
                         ? const SizedBox(
                             width: 18,

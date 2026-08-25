@@ -48,7 +48,7 @@ class _PageSetupModalState extends State<PageSetupModal> {
     _photoSpacingMm = c.photoSpacingMm;
     _qualityPreset = c.qualityPreset;
     _imageFit = c.imageFit;
-    _includePageNumbers = c.includePageNumbers;
+    _includePageNumbers = c.enablePageNumbers;
 
     _customWidthController = TextEditingController(text: _customWidthMm.toStringAsFixed(0));
     _customHeightController = TextEditingController(text: _customHeightMm.toStringAsFixed(0));
@@ -85,7 +85,7 @@ class _PageSetupModalState extends State<PageSetupModal> {
       photoSpacingMm: _photoSpacingMm.clamp(0.0, 20.0),
       qualityPreset: _qualityPreset,
       imageFit: _imageFit,
-      includePageNumbers: _includePageNumbers,
+      enablePageNumbers: _includePageNumbers,
       watermarkText: _watermarkController.text.trim().isEmpty ? null : _watermarkController.text.trim(),
       headerText: _headerController.text.trim().isEmpty ? null : _headerController.text.trim(),
       footerText: _footerController.text.trim().isEmpty ? null : _footerController.text.trim(),

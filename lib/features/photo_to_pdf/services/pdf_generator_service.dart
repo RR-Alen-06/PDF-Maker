@@ -6,6 +6,7 @@ import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
 import '../../../core/constants/page_sizes.dart';
 import '../domain/models/photo_item.dart';
 import '../domain/models/pdf_export_config.dart';
+import '../domain/models/overlay_config.dart';
 import 'image_filter_service.dart';
 
 typedef PdfProgressCallback = void Function(int currentPage, int totalPages);
@@ -18,13 +19,17 @@ class PdfGeneratorService {
   static Future<Uint8List> generatePdf({
     required List<PhotoItem> photos,
     required PdfExportConfig config,
+    String? documentTitle,
     PdfProgressCallback? onPageProgress,
   }) async {
+    final cleanTitle = documentTitle ?? 'PDF Maker Document';
     final pdf = pw.Document(
       version: PdfVersion.pdf_1_4,
       compress: true,
-      title: 'PDF Maker Document',
+      title: cleanTitle,
       author: 'Photo-to-PDF Maker Studio',
+      creator: 'PDF Maker Studio v1.0.0',
+      subject: 'Converted Photos PDF Document',
     );
 
     final marginPt = config.marginPt;
@@ -39,6 +44,10 @@ class PdfGeneratorService {
 
     final photosPerPage = config.layout.photosPerPage;
     final totalPages = (photos.length / photosPerPage).ceil();
+
+    final exportDate = config.dateStampSource == DateStampSource.custom && config.customDate != null
+        ? config.customDate!
+        : DateTime.now();
 
     for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
       onPageProgress?.call(pageIndex + 1, totalPages);
@@ -73,7 +82,7 @@ class PdfGeneratorService {
                       : pw.BoxFit.contain,
                 ),
 
-                // 2. Header
+                // 2. Header (if specified)
                 if (config.headerText != null && config.headerText!.trim().isNotEmpty)
                   pw.Positioned(
                     top: 0,
@@ -90,47 +99,32 @@ class PdfGeneratorService {
                     ),
                   ),
 
-                // 3. Footer & Page Numbers
-                if ((config.footerText != null && config.footerText!.trim().isNotEmpty) ||
-                    config.includePageNumbers)
+                // 3. Footer (if specified)
+                if (config.footerText != null && config.footerText!.trim().isNotEmpty)
                   pw.Positioned(
                     bottom: 0,
                     left: 0,
                     right: 0,
-                    child: pw.Row(
-                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                      children: [
-                        pw.Text(
-                          config.footerText ?? '',
-                          style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
-                        ),
-                        if (config.includePageNumbers)
-                          pw.Text(
-                            config.pageNumberFormat
-                                .replaceAll('{page}', '${pageIndex + 1}')
-                                .replaceAll('{total}', '$totalPages'),
-                            style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
-                          ),
-                      ],
+                    child: pw.Text(
+                      config.footerText!,
+                      style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey600),
+                      textAlign: pw.TextAlign.center,
                     ),
                   ),
 
-                // 4. Watermark Layer (Rotated diagonally across page center)
-                if (config.watermarkText != null && config.watermarkText!.trim().isNotEmpty)
-                  pw.Center(
-                    child: pw.Transform.rotate(
-                      angle: -0.785398, // -45 degrees
-                      child: pw.Text(
-                        config.watermarkText!,
-                        style: pw.TextStyle(
-                          color: PdfColor(0.7, 0.7, 0.7, config.watermarkOpacity),
-                          fontSize: config.watermarkFontSize,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                        textAlign: pw.TextAlign.center,
-                      ),
-                    ),
-                  ),
+                // 4. Watermark Layer (Independent 9-position, angle, opacity)
+                if (config.enableWatermark &&
+                    config.watermarkText != null &&
+                    config.watermarkText!.trim().isNotEmpty)
+                  _buildWatermarkOverlay(config),
+
+                // 5. Date Stamp Layer (Independent 9-position, format, font size)
+                if (config.enableDateStamp)
+                  _buildDateStampOverlay(config, exportDate),
+
+                // 6. Page Numbers Layer (Independent 9-position, format, font size)
+                if (config.enablePageNumbers)
+                  _buildPageNumberOverlay(config, pageIndex + 1, totalPages),
               ],
             );
           },
@@ -140,7 +134,7 @@ class PdfGeneratorService {
 
     Uint8List rawPdfBytes = await pdf.save();
 
-    // 5. Password protection & security encryption if requested
+    // 7. Password protection & security encryption if requested
     if (config.userPassword != null && config.userPassword!.isNotEmpty) {
       rawPdfBytes = _applyPasswordSecurity(
         rawPdfBytes: rawPdfBytes,
@@ -152,8 +146,86 @@ class PdfGeneratorService {
     return rawPdfBytes;
   }
 
+  /// Positions an element according to 9-cell grid
+  static pw.Alignment _gridPositionToAlignment(OverlayGridPosition pos) {
+    switch (pos) {
+      case OverlayGridPosition.topLeft:
+        return pw.Alignment.topLeft;
+      case OverlayGridPosition.topCenter:
+        return pw.Alignment.topCenter;
+      case OverlayGridPosition.topRight:
+        return pw.Alignment.topRight;
+      case OverlayGridPosition.middleLeft:
+        return pw.Alignment.centerLeft;
+      case OverlayGridPosition.middleCenter:
+        return pw.Alignment.center;
+      case OverlayGridPosition.middleRight:
+        return pw.Alignment.centerRight;
+      case OverlayGridPosition.bottomLeft:
+        return pw.Alignment.bottomLeft;
+      case OverlayGridPosition.bottomCenter:
+        return pw.Alignment.bottomCenter;
+      case OverlayGridPosition.bottomRight:
+        return pw.Alignment.bottomRight;
+    }
+  }
+
+  static pw.Widget _buildPageNumberOverlay(
+    PdfExportConfig config,
+    int currentPage,
+    int totalPages,
+  ) {
+    final text = config.pageNumberFormatPreset.format(currentPage, totalPages);
+    return pw.Align(
+      alignment: _gridPositionToAlignment(config.pageNumberPosition),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: config.pageNumberFontSize,
+          color: PdfColors.grey700,
+          fontWeight: pw.FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _buildDateStampOverlay(
+    PdfExportConfig config,
+    DateTime date,
+  ) {
+    final text = config.dateStampFormatPreset.format(date);
+    return pw.Align(
+      alignment: _gridPositionToAlignment(config.dateStampPosition),
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          fontSize: config.dateStampFontSize,
+          color: PdfColors.grey700,
+        ),
+      ),
+    );
+  }
+
+  static pw.Widget _buildWatermarkOverlay(PdfExportConfig config) {
+    final radians = (config.watermarkRotationAngle * 3.141592653589793) / 180.0;
+    return pw.Align(
+      alignment: _gridPositionToAlignment(config.watermarkPosition),
+      child: pw.Transform.rotate(
+        angle: radians,
+        child: pw.Text(
+          config.watermarkText!,
+          style: pw.TextStyle(
+            color: PdfColor(0.5, 0.5, 0.5, config.watermarkOpacity.clamp(0.05, 1.0)),
+            fontSize: config.watermarkFontSize,
+            fontWeight: pw.FontWeight.bold,
+          ),
+          textAlign: pw.TextAlign.center,
+        ),
+      ),
+    );
+  }
+
   /// Builds the visual grid layout according to selected PdfPhotoLayout.
-  /// Partially filled slots are rendered with blank space.
   static pw.Widget _buildPhotoLayout({
     required List<pw.MemoryImage> images,
     required PdfPhotoLayout layout,

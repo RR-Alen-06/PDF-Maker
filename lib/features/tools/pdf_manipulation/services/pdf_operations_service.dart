@@ -1,18 +1,101 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
+import 'package:path/path.dart' as p;
+
+class MergePdfItem {
+  final String path;
+  final String name;
+  final int pageCount;
+  final int fileSizeBytes;
+  final bool isEncrypted;
+  final String? password;
+
+  const MergePdfItem({
+    required this.path,
+    required this.name,
+    required this.pageCount,
+    required this.fileSizeBytes,
+    this.isEncrypted = false,
+    this.password,
+  });
+
+  MergePdfItem copyWith({
+    String? path,
+    String? name,
+    int? pageCount,
+    int? fileSizeBytes,
+    bool? isEncrypted,
+    String? password,
+  }) {
+    return MergePdfItem(
+      path: path ?? this.path,
+      name: name ?? this.name,
+      pageCount: pageCount ?? this.pageCount,
+      fileSizeBytes: fileSizeBytes ?? this.fileSizeBytes,
+      isEncrypted: isEncrypted ?? this.isEncrypted,
+      password: password ?? this.password,
+    );
+  }
+}
 
 class PdfManipulationService {
   PdfManipulationService._();
 
-  /// Merge multiple PDF files into one output file
-  static Future<Uint8List> mergePdfs(List<String> pdfPaths) async {
+  /// Inspect a PDF file to get page count and check if password protected
+  static Future<MergePdfItem> inspectPdf(String filePath) async {
+    final file = File(filePath);
+    final bytes = await file.readAsBytes();
+    final size = bytes.lengthInBytes;
+    final name = p.basename(filePath);
+
+    bool isEncrypted = false;
+    int pages = 1;
+
+    try {
+      final doc = sf.PdfDocument(inputBytes: bytes);
+      pages = doc.pages.count;
+      doc.dispose();
+    } catch (e) {
+      // Syncfusion throws exception if PDF is password protected
+      isEncrypted = true;
+    }
+
+    return MergePdfItem(
+      path: filePath,
+      name: name,
+      pageCount: pages,
+      fileSizeBytes: size,
+      isEncrypted: isEncrypted,
+    );
+  }
+
+  /// Verify if a password opens an encrypted PDF
+  static bool testPdfPassword(Uint8List bytes, String password) {
+    try {
+      final doc = sf.PdfDocument(inputBytes: bytes, password: password);
+      doc.dispose();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Merge multiple PDF files into one output file with password support
+  static Future<Uint8List> mergePdfsWithMetadata(List<MergePdfItem> items) async {
     final sf.PdfDocument finalDoc = sf.PdfDocument();
 
-    for (final path in pdfPaths) {
-      final bytes = await File(path).readAsBytes();
-      final loadedDoc = sf.PdfDocument(inputBytes: bytes);
+    for (final item in items) {
+      final bytes = await File(item.path).readAsBytes();
+      sf.PdfDocument loadedDoc;
+      if (item.isEncrypted && item.password != null) {
+        loadedDoc = sf.PdfDocument(inputBytes: bytes, password: item.password);
+      } else {
+        loadedDoc = sf.PdfDocument(inputBytes: bytes);
+      }
+
       for (int i = 0; i < loadedDoc.pages.count; i++) {
         final section = finalDoc.sections!.add();
         section.pageSettings.size = loadedDoc.pages[i].size;
@@ -28,6 +111,16 @@ class PdfManipulationService {
     final List<int> mergedBytes = finalDoc.saveSync();
     finalDoc.dispose();
     return Uint8List.fromList(mergedBytes);
+  }
+
+  /// Legacy merge multiple PDF files into one output file
+  static Future<Uint8List> mergePdfs(List<String> pdfPaths) async {
+    final items = <MergePdfItem>[];
+    for (final path in pdfPaths) {
+      final item = await inspectPdf(path);
+      items.add(item);
+    }
+    return mergePdfsWithMetadata(items);
   }
 
   /// Split PDF: extracts a range of pages (1-indexed) into a new PDF
@@ -72,7 +165,7 @@ class PdfManipulationService {
       if (pageNum >= 1 && pageNum <= sourceDoc.pages.count) {
         final zeroIndex = pageNum - 1;
         final section = newDoc.sections!.add();
-        final rotation = pageRotations[pageNum] ?? 0;
+        final rotation = (pageRotations[pageNum] ?? 0) % 360;
 
         if (rotation == 90 || rotation == 270) {
           section.pageSettings.size = ui.Size(

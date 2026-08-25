@@ -61,22 +61,46 @@ class HistoryStorageService {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, 'pdf_maker_history.db');
 
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            file_size_bytes INTEGER NOT NULL,
-            page_count INTEGER NOT NULL,
-            created_at TEXT NOT NULL
-          )
-        ''');
-      },
-    );
+    try {
+      return await openDatabase(
+        path,
+        version: 1,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              file_path TEXT NOT NULL,
+              file_size_bytes INTEGER NOT NULL,
+              page_count INTEGER NOT NULL,
+              created_at TEXT NOT NULL
+            )
+          ''');
+        },
+      );
+    } catch (_) {
+      // Suggestion 13: Delete corrupted storage and re-initialize empty database
+      try {
+        await deleteDatabase(path);
+      } catch (_) {}
+
+      return await openDatabase(
+        path,
+        version: 1,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              title TEXT NOT NULL,
+              file_path TEXT NOT NULL,
+              file_size_bytes INTEGER NOT NULL,
+              page_count INTEGER NOT NULL,
+              created_at TEXT NOT NULL
+            )
+          ''');
+        },
+      );
+    }
   }
 
   Future<int> addHistoryItem({

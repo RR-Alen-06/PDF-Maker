@@ -55,12 +55,13 @@ class ImageCompressorService {
   }
 
   /// Compress single image with given quality percentage (1-100) or target size in KB.
-  /// Saves to output directory with pattern `<original_name>_compressed.<ext>`.
+  /// Saves to output directory with pattern `<name>_compressed.<ext>` (Suggestion 19).
   static Future<CompressedImageResult> compressImage({
     required String imagePath,
     required int quality,
     int? targetSizeKb,
     Directory? customOutputDir,
+    String? customBaseName,
   }) async {
     final originalFile = File(imagePath);
     final originalBytes = await originalFile.readAsBytes();
@@ -78,7 +79,7 @@ class ImageCompressorService {
     final baseDir = customOutputDir ?? await getTemporaryDirectory();
     final fileNameWithExt = p.basename(imagePath);
     final ext = p.extension(fileNameWithExt);
-    final nameWithoutExt = p.basenameWithoutExtension(fileNameWithExt);
+    final nameWithoutExt = customBaseName ?? p.basenameWithoutExtension(fileNameWithExt);
     final targetPath = p.join(baseDir.path, '${nameWithoutExt}_compressed$ext');
 
     Uint8List? compressedBytes;

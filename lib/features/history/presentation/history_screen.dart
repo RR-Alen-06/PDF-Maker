@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
-import 'package:pdf_maker/features/history_and_settings/services/history_storage_service.dart';
+import 'package:pdf_maker/features/history/services/history_storage_service.dart';
 
 class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});

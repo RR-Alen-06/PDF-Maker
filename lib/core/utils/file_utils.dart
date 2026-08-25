@@ -22,9 +22,26 @@ class FileUtils {
   }
 
   /// Sanitizes a filename by stripping invalid filesystem characters: \ / : * ? " < > |
-  static String sanitizeFileName(String name) {
+  /// and ensures the total filename (including extension) does not exceed 200 characters (Suggestion 16).
+  static String sanitizeFileName(String name, {String? extension}) {
     final invalidChars = RegExp(r'[\\/:*?"<>|]');
-    return name.replaceAll(invalidChars, '').trim();
+    var clean = name.replaceAll(invalidChars, '').trim();
+
+    if (extension != null && extension.isNotEmpty) {
+      if (clean.endsWith(extension)) {
+        clean = clean.substring(0, clean.length - extension.length);
+      }
+      final maxBaseLength = 200 - extension.length;
+      if (clean.length > maxBaseLength) {
+        clean = clean.substring(0, maxBaseLength);
+      }
+      return '$clean$extension';
+    } else {
+      if (clean.length > 200) {
+        clean = clean.substring(0, 200);
+      }
+      return clean;
+    }
   }
 
   /// App designated output directory for saving generated PDFs.
@@ -47,6 +64,29 @@ class FileUtils {
       await pdfDir.create(recursive: true);
     }
     return pdfDir;
+  }
+
+  /// Silently cleans up any abandoned .tmp files from crashed/interrupted sessions (Suggestion 1).
+  static Future<void> cleanupStaleTempFiles() async {
+    try {
+      final dirsToScan = <Directory>[
+        await getTemporaryDirectory(),
+        await getAppPdfDirectory(),
+      ];
+
+      for (final dir in dirsToScan) {
+        if (await dir.exists()) {
+          final entries = dir.listSync();
+          for (final entry in entries) {
+            if (entry is File && (entry.path.endsWith('.tmp') || p.basename(entry.path).startsWith('.storage_probe_'))) {
+              try {
+                await entry.delete();
+              } catch (_) {}
+            }
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   /// Generates a default filename following the pattern Scan_YYYY-MM-DD_001
@@ -86,16 +126,15 @@ class FileUtils {
   /// Synchronous default filename generator with timestamp pattern
   static String generateDefaultFileName({String prefix = 'Document'}) {
     final dateStr = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-    return '${prefix}_$dateStr.pdf';
+    return sanitizeFileName('${prefix}_$dateStr.pdf');
   }
 
-  /// Checks if available storage space is sufficient (> 50 MB threshold).
-  /// In non-mockable / pure Dart environments, verifies write test probe.
+  /// Checks if available storage space is sufficient (> 50 MB threshold or required size + 10% margin).
   static Future<bool> hasSufficientStorage({int minRequiredBytes = 50 * 1024 * 1024}) async {
     try {
       final dir = await getAppPdfDirectory();
-      final testFile = File(p.join(dir.path, '.storage_probe_${DateTime.now().microsecondsSinceEpoch}'));
-      // Write small test block to ensure filesystem is writable and not full
+      final testFile = File(p.join(dir.path, '.storage_probe_${DateTime.now().microsecondsSinceEpoch}.tmp'));
+      // Write test probe to verify filesystem write capability
       await testFile.writeAsBytes(List<int>.filled(1024, 0), flush: true);
       if (await testFile.exists()) {
         await testFile.delete();
@@ -106,16 +145,54 @@ class FileUtils {
     }
   }
 
-  /// Save PDF bytes to device local storage
+  /// Save PDF bytes to device local storage atomically using .tmp and renaming (Suggestion 1).
+  /// Enforces maximum 200-char filename cap (Suggestion 16).
   static Future<File> savePdfFile({
     required List<int> bytes,
     required String fileName,
+    String? customDirectory,
   }) async {
-    final pdfDir = await getAppPdfDirectory();
-    final cleanName = sanitizeFileName(fileName);
-    final finalName = cleanName.endsWith('.pdf') ? cleanName : '$cleanName.pdf';
-    final file = File(p.join(pdfDir.path, finalName));
-    return await file.writeAsBytes(bytes, flush: true);
+    Directory pdfDir;
+    if (customDirectory != null && customDirectory.isNotEmpty) {
+      pdfDir = Directory(customDirectory);
+      try {
+        if (!await pdfDir.exists()) {
+          await pdfDir.create(recursive: true);
+        }
+      } on FileSystemException catch (_) {
+        pdfDir = await getAppPdfDirectory();
+      }
+    } else {
+      pdfDir = await getAppPdfDirectory();
+    }
+
+    final finalName = sanitizeFileName(fileName);
+    final targetPath = p.join(pdfDir.path, finalName);
+    final tempPath = '$targetPath.tmp';
+    final tempFile = File(tempPath);
+
+    try {
+      await tempFile.writeAsBytes(bytes, flush: true);
+      final finalFile = await tempFile.rename(targetPath);
+
+      // Suggestion 26: File Integrity Checksum / Byte Length Verification
+      final writtenLength = await finalFile.length();
+      if (writtenLength != bytes.length) {
+        if (await finalFile.exists()) {
+          await finalFile.delete();
+        }
+        throw const FileSystemException('Save failed — write error: byte length mismatch.');
+      }
+
+      return finalFile;
+    } catch (e) {
+      if (await tempFile.exists()) {
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+      }
+      rethrow;
+    }
   }
 
   /// Open PDF in default external PDF reader application.

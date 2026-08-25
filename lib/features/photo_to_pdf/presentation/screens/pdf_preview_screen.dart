@@ -1,12 +1,15 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:printing/printing.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:pdf_maker/core/constants/app_colors.dart';
+import 'package:pdf_maker/core/constants/page_sizes.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
-import 'package:pdf_maker/features/history_and_settings/services/history_storage_service.dart';
+import 'package:pdf_maker/features/history/services/history_storage_service.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/controllers/photo_to_pdf_controller.dart';
 
 class PdfPreviewScreen extends ConsumerStatefulWidget {
@@ -24,7 +27,7 @@ class PdfPreviewScreen extends ConsumerStatefulWidget {
 class _PdfPreviewScreenState extends ConsumerState<PdfPreviewScreen> {
   bool _isSaving = false;
   File? _savedFile;
-  final int _currentPageIndex = 1;
+  int _currentPageIndex = 1;
   int _totalPages = 1;
 
   @override
@@ -142,6 +145,45 @@ class _PdfPreviewScreenState extends ConsumerState<PdfPreviewScreen> {
         fileSizeBytes: bytes.length,
         pageCount: (pdfState.photos.length / pdfState.config.layout.photosPerPage).ceil(),
       );
+
+      // Suggestion 35: In-App Review Prompt after 3rd PDF (throttled to 30 days)
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final saveCount = (prefs.getInt('pdf_save_count') ?? 0) + 1;
+        await prefs.setInt('pdf_save_count', saveCount);
+
+        final lastPromptStr = prefs.getString('last_review_prompt_date');
+        final lastPrompt = lastPromptStr != null ? DateTime.tryParse(lastPromptStr) : null;
+        final shouldPrompt = saveCount >= 3 &&
+            (lastPrompt == null || DateTime.now().difference(lastPrompt).inDays >= 30);
+
+        if (shouldPrompt && mounted) {
+          await prefs.setString('last_review_prompt_date', DateTime.now().toIso8601String());
+          if (!mounted) return;
+          // Show non-intrusive rate app dialog
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.star_rounded, color: Colors.amber),
+                  SizedBox(width: 8),
+                  Text('Enjoying PDF Maker?'),
+                ],
+              ),
+              content: const Text('Would you take a moment to rate us on the app store? It helps support ongoing development!'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Not Now')),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Rate App'),
+                ),
+              ],
+            ),
+          );
+        }
+      } catch (_) {}
 
       setState(() {
         _savedFile = file;
@@ -283,19 +325,53 @@ class _PdfPreviewScreenState extends ConsumerState<PdfPreviewScreen> {
     });
   }
 
+  Widget _buildQualityChip(String label, ImageQualityPreset preset) {
+    final currentPreset = ref.watch(photoToPdfProvider).config.qualityPreset;
+    final isSelected = currentPreset == preset;
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 11)),
+      selected: isSelected,
+      onSelected: (selected) async {
+        if (selected) {
+          final cfg = ref.read(photoToPdfProvider).config.copyWith(qualityPreset: preset);
+          ref.read(photoToPdfProvider.notifier).updateConfig(cfg);
+          await ref.read(photoToPdfProvider.notifier).generatePdf();
+        }
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final pdfState = ref.watch(photoToPdfProvider);
     final bytes = pdfState.generatedPdfBytes;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('PDF Preview'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          tooltip: 'Back to Arrangement',
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () {
+          if (_currentPageIndex > 1) {
+            setState(() => _currentPageIndex--);
+          }
+        },
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () {
+          if (_currentPageIndex < _totalPages) {
+            setState(() => _currentPageIndex++);
+          }
+        },
+        const SingleActivator(LogicalKeyboardKey.escape): () {
+          Navigator.of(context).pop();
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('PDF Preview'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              tooltip: 'Back to Arrangement',
+              onPressed: () => Navigator.of(context).pop(),
+            ),
         actions: [
           // Page counter badge
           Center(
@@ -328,6 +404,36 @@ class _PdfPreviewScreenState extends ConsumerState<PdfPreviewScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
+                // Gap 13: Export Quality Presets (Small, Medium, Original, Custom)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: Theme.of(context).cardColor,
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Quality:',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              _buildQualityChip('Small (72 DPI, 50%)', ImageQualityPreset.low),
+                              const SizedBox(width: 6),
+                              _buildQualityChip('Medium (150 DPI, 75%)', ImageQualityPreset.medium),
+                              const SizedBox(width: 6),
+                              _buildQualityChip('Original (Lossless)', ImageQualityPreset.original),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+
                 // Interactive Zoomable PDF Viewer with 4x maximum zoom level
                 Expanded(
                   child: InteractiveViewer(
@@ -397,6 +503,8 @@ class _PdfPreviewScreenState extends ConsumerState<PdfPreviewScreen> {
             ],
           ),
         ),
+      ),
+      ),
       ),
     );
   }

@@ -1,10 +1,13 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import 'package:path/path.dart' as p;
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
-import 'package:pdf_maker/features/history_and_settings/services/history_storage_service.dart';
-import 'package:pdf_maker/features/tools/pdf_manipulation/services/pdf_manipulation_service.dart';
+import 'package:pdf_maker/features/history/services/history_storage_service.dart';
+import 'package:pdf_maker/features/tools/pdf_manipulation/services/pdf_operations_service.dart';
 
 class PdfMergeScreen extends StatefulWidget {
   const PdfMergeScreen({super.key});
@@ -14,7 +17,7 @@ class PdfMergeScreen extends StatefulWidget {
 }
 
 class _PdfMergeScreenState extends State<PdfMergeScreen> {
-  final List<String> _selectedPdfs = [];
+  final List<MergePdfItem> _selectedPdfs = [];
   bool _isMerging = false;
   File? _savedFile;
 
@@ -26,32 +29,184 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
       allowMultiple: true,
     );
     if (files.isNotEmpty) {
-      setState(() {
-        for (final file in files) {
-          if (file.path != null && !_selectedPdfs.contains(file.path!)) {
-            _selectedPdfs.add(file.path!);
+      for (final file in files) {
+        if (file.path != null && _selectedPdfs.length < 20) {
+          final alreadySelected = _selectedPdfs.any((item) => item.path == file.path!);
+          if (!alreadySelected) {
+            final inspected = await PdfManipulationService.inspectPdf(file.path!);
+            _selectedPdfs.add(inspected);
           }
         }
-        _savedFile = null;
-      });
+      }
+      setState(() => _savedFile = null);
     }
+  }
+
+  Future<String?> _promptPasswordDialog(MergePdfItem item, int attempt) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.lock_outline_rounded, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Text(
+              'Password Required',
+              style: GoogleFonts.sora(fontWeight: FontWeight.bold, fontSize: 17),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'File "${item.name}" is password protected. Enter password (Attempt $attempt/3):',
+              style: const TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Password',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: const Text('Skip File'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Unlock'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String> _generateMergedFileName() async {
+    final dateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final prefix = 'Merged_$dateStr';
+    final targetDir = await FileUtils.getAppPdfDirectory();
+
+    int highest = 0;
+    if (await targetDir.exists()) {
+      for (final entry in targetDir.listSync()) {
+        final fName = p.basename(entry.path);
+        final match = RegExp('^${RegExp.escape(prefix)}_(\\d{3})\\.pdf\$').firstMatch(fName);
+        if (match != null) {
+          final idx = int.tryParse(match.group(1)!) ?? 0;
+          if (idx > highest) highest = idx;
+        }
+      }
+    }
+    final nextIdx = (highest + 1).toString().padLeft(3, '0');
+    return '${prefix}_$nextIdx.pdf';
   }
 
   Future<void> _mergeAndSave() async {
     if (_selectedPdfs.length < 2) return;
     setState(() => _isMerging = true);
 
+    final readyItems = <MergePdfItem>[];
+    final skippedFiles = <String>[];
+
+    for (final item in _selectedPdfs) {
+      if (item.isEncrypted) {
+        String? validPassword;
+        int attempts = 0;
+        final bytes = await File(item.path).readAsBytes();
+
+        while (attempts < 3) {
+          attempts++;
+          final entered = await _promptPasswordDialog(item, attempts);
+          if (entered == null) break; // User tapped Skip
+
+          final isValid = PdfManipulationService.testPdfPassword(bytes, entered);
+          if (isValid) {
+            validPassword = entered;
+            break;
+          } else if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Incorrect password for ${item.name} ($attempts/3)'),
+                backgroundColor: AppColors.error,
+              ),
+            );
+          }
+        }
+
+        if (validPassword != null) {
+          readyItems.add(item.copyWith(password: validPassword));
+        } else {
+          skippedFiles.add(item.name);
+        }
+      } else {
+        readyItems.add(item);
+      }
+    }
+
+    if (readyItems.length < 2) {
+      setState(() => _isMerging = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              skippedFiles.isNotEmpty
+                  ? 'Cannot merge: ${skippedFiles.join(", ")} was skipped after 3 failed attempts.'
+                  : 'At least 2 unlocked PDFs are required to merge.',
+            ),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Suggestion 10: Storage pre-check before merge (sum of inputs + 10% margin)
+    final totalInputBytes = readyItems.fold<int>(0, (sum, i) => sum + i.fileSizeBytes);
+    final estimatedOutputBytes = (totalInputBytes * 1.10).round();
+    final hasSpace = await FileUtils.hasSufficientStorage(minRequiredBytes: estimatedOutputBytes);
+    if (!hasSpace) {
+      setState(() => _isMerging = false);
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Insufficient Storage'),
+            content: Text(
+              'Estimated merge size (${FileUtils.formatBytes(estimatedOutputBytes)}) exceeds available device storage. Free space and retry.',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+
     try {
-      final bytes = await PdfManipulationService.mergePdfs(_selectedPdfs);
-      final fileName = FileUtils.generateDefaultFileName(prefix: 'Merged_PDF');
+      final bytes = await PdfManipulationService.mergePdfsWithMetadata(readyItems);
+      final fileName = await _generateMergedFileName();
       final file = await FileUtils.savePdfFile(bytes: bytes, fileName: fileName);
 
+      final totalPages = readyItems.fold(0, (sum, i) => sum + i.pageCount);
       final history = HistoryStorageService();
       await history.addHistoryItem(
         title: fileName,
         filePath: file.path,
         fileSizeBytes: bytes.lengthInBytes,
-        pageCount: _selectedPdfs.length,
+        pageCount: totalPages,
       );
 
       setState(() {
@@ -62,7 +217,7 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Successfully merged ${_selectedPdfs.length} PDFs!'),
+            content: Text('Saved as $fileName (${readyItems.length} merged)'),
             backgroundColor: AppColors.success,
             action: SnackBarAction(
               label: 'Open',
@@ -119,13 +274,13 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    const Text(
+                    Text(
                       'Combine Multiple PDFs',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      style: GoogleFonts.sora(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Select two or more PDF documents to combine them into a single seamless document.',
+                      'Select 2–20 PDF documents to combine them into a single file.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey),
                     ),
@@ -133,7 +288,7 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
                     ElevatedButton.icon(
                       onPressed: _pickPdfs,
                       icon: const Icon(Icons.add_rounded),
-                      label: const Text('Select PDF Files'),
+                      label: const Text('Select 2–20 PDFs'),
                     ),
                   ],
                 ),
@@ -142,10 +297,19 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
           : Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    'Drag items to reorder the merge sequence:',
-                    style: TextStyle(color: Theme.of(context).textTheme.bodySmall?.color),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${_selectedPdfs.length} PDFs selected (Drag to reorder):',
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      ),
+                      Text(
+                        'Total: ${FileUtils.formatBytes(_selectedPdfs.fold(0, (s, i) => s + i.fileSizeBytes))}',
+                        style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ],
                   ),
                 ),
                 Expanded(
@@ -159,11 +323,11 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
                       });
                     },
                     itemBuilder: (context, index) {
-                      final path = _selectedPdfs[index];
-                      final name = path.split(Platform.pathSeparator).last;
+                      final item = _selectedPdfs[index];
                       return Card(
-                        key: ValueKey(path),
+                        key: ValueKey(item.path),
                         margin: const EdgeInsets.only(bottom: 10),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         child: ListTile(
                           leading: CircleAvatar(
                             backgroundColor: AppColors.primary.withValues(alpha: 0.1),
@@ -176,16 +340,17 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
                             ),
                           ),
                           title: Text(
-                            name,
+                            item.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                           subtitle: Text(
-                            path,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 11),
+                            '${item.pageCount} ${item.pageCount == 1 ? "page" : "pages"} • ${FileUtils.formatBytes(item.fileSizeBytes)}${item.isEncrypted ? " • Locked" : ""}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: item.isEncrypted ? AppColors.tertiary : Colors.grey,
+                            ),
                           ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -213,9 +378,9 @@ class _PdfMergeScreenState extends State<PdfMergeScreen> {
               child: Row(
                 children: [
                   OutlinedButton.icon(
-                    onPressed: _pickPdfs,
+                    onPressed: _selectedPdfs.length < 20 ? _pickPdfs : null,
                     icon: const Icon(Icons.add_rounded),
-                    label: const Text('Add PDF'),
+                    label: Text('Add (${_selectedPdfs.length}/20)'),
                     style: OutlinedButton.styleFrom(minimumSize: const Size(120, 52)),
                   ),
                   const SizedBox(width: 12),

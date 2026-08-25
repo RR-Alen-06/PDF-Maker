@@ -12,14 +12,13 @@ import 'package:pdf_maker/features/photo_to_pdf/domain/models/photo_item.dart';
 import 'package:pdf_maker/features/photo_to_pdf/domain/models/pdf_export_config.dart';
 import 'package:pdf_maker/features/photo_to_pdf/services/pdf_generator_service.dart';
 
-/// Supported image file extensions
-const Set<String> kSupportedImageExtensions = {
+/// Supported image file extensions (excluding HEIC/HEIF on Android per Suggestion 32)
+Set<String> get kSupportedImageExtensions => {
   '.jpg',
   '.jpeg',
   '.png',
   '.webp',
-  '.heic',
-  '.heif',
+  if (Platform.isIOS) ...['.heic', '.heif'],
 };
 
 /// 50 MB threshold in decoded RGBA bytes (50 * 1024 * 1024 = 52,428,800 bytes)
@@ -33,6 +32,7 @@ class PhotoToPdfState {
   final String? errorMessage;
   final String? validationWarning;
   final List<String> unsupportedSkippedFiles;
+  final int duplicateSkippedCount;
   final bool permissionDeniedNeedSettings;
   final String? permissionDeniedMessage;
   final String? progressMessage;
@@ -40,6 +40,7 @@ class PhotoToPdfState {
   final Uint8List? generatedPdfBytes;
   final List<List<PhotoItem>> undoStack;
   final List<List<PhotoItem>> redoStack;
+  final bool isCancelled;
 
   const PhotoToPdfState({
     this.photos = const [],
@@ -48,6 +49,7 @@ class PhotoToPdfState {
     this.errorMessage,
     this.validationWarning,
     this.unsupportedSkippedFiles = const [],
+    this.duplicateSkippedCount = 0,
     this.permissionDeniedNeedSettings = false,
     this.permissionDeniedMessage,
     this.progressMessage,
@@ -55,11 +57,13 @@ class PhotoToPdfState {
     this.generatedPdfBytes,
     this.undoStack = const [],
     this.redoStack = const [],
+    this.isCancelled = false,
   });
 
   bool get canUndo => undoStack.isNotEmpty;
   bool get canRedo => redoStack.isNotEmpty;
   bool get hasSufficientPhotos => photos.length >= 2;
+  int get autoDownscaledCount => photos.where((p) => p.wasAutoDownscaled).length;
 
   PhotoToPdfState copyWith({
     List<PhotoItem>? photos,
@@ -68,6 +72,7 @@ class PhotoToPdfState {
     String? errorMessage,
     String? validationWarning,
     List<String>? unsupportedSkippedFiles,
+    int? duplicateSkippedCount,
     bool? permissionDeniedNeedSettings,
     String? permissionDeniedMessage,
     String? progressMessage,
@@ -75,6 +80,7 @@ class PhotoToPdfState {
     Uint8List? generatedPdfBytes,
     List<List<PhotoItem>>? undoStack,
     List<List<PhotoItem>>? redoStack,
+    bool? isCancelled,
     bool clearWarning = false,
     bool clearSkippedFiles = false,
     bool clearPermissionError = false,
@@ -88,6 +94,7 @@ class PhotoToPdfState {
       unsupportedSkippedFiles: clearSkippedFiles
           ? const []
           : (unsupportedSkippedFiles ?? this.unsupportedSkippedFiles),
+      duplicateSkippedCount: duplicateSkippedCount ?? this.duplicateSkippedCount,
       permissionDeniedNeedSettings: clearPermissionError
           ? false
           : (permissionDeniedNeedSettings ?? this.permissionDeniedNeedSettings),
@@ -99,12 +106,14 @@ class PhotoToPdfState {
       generatedPdfBytes: generatedPdfBytes ?? this.generatedPdfBytes,
       undoStack: undoStack ?? this.undoStack,
       redoStack: redoStack ?? this.redoStack,
+      isCancelled: isCancelled ?? this.isCancelled,
     );
   }
 }
 
 class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
   final ImagePicker _picker = ImagePicker();
+  bool _cancelRequested = false;
 
   PhotoToPdfController() : super(const PhotoToPdfState());
 
@@ -116,7 +125,7 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
   }
 
   void clearSkippedFilesNotification() {
-    state = state.copyWith(clearSkippedFiles: true);
+    state = state.copyWith(clearSkippedFiles: true, duplicateSkippedCount: 0);
   }
 
   void clearPermissionError() {
@@ -127,7 +136,7 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     state = state.copyWith(clearWarning: true);
   }
 
-  /// Request permissions for photos or camera
+  /// Request permissions for photos or camera with Android tiering (Suggestion 29)
   Future<bool> _checkAndRequestPermission({required bool isCamera}) async {
     PermissionStatus status;
     if (isCamera) {
@@ -141,7 +150,7 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
       } else if (Platform.isIOS) {
         status = await Permission.photos.request();
       } else {
-        return true; // Desktop / Web mock
+        return true;
       }
     }
 
@@ -149,8 +158,8 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
       state = state.copyWith(
         permissionDeniedNeedSettings: true,
         permissionDeniedMessage: isCamera
-            ? 'Camera permission is required to capture photos directly for your PDF. Please enable it in system settings.'
-            : 'Photo library access is needed to select images for your document. Please enable it in system settings.',
+            ? 'Camera permission is permanently denied. Please enable it in system settings.'
+            : 'Photo library access is permanently denied. Please enable it in system settings.',
         isLoading: false,
       );
       return false;
@@ -251,17 +260,25 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     }
   }
 
-  /// Process picked files: filter unsupported formats & auto-downscale decoded > 50 MB
+  /// Process picked files: filter unsupported formats, skip duplicates (Suggestion 23) & auto-downscale decoded > 50 MB
   Future<void> _addPhotosFromFiles(List<XFile> files) async {
     _pushUndoState();
     final newItems = <PhotoItem>[];
     final skippedNames = <String>[];
+    final existingPaths = state.photos.map((p) => p.path).toSet();
+    int duplicatesCount = 0;
 
     for (final file in files) {
       final ext = p.extension(file.path).toLowerCase();
       final baseName = p.basename(file.path);
 
-      // 1. Filter unsupported file types
+      // 1. Suggestion 23: Duplicate Photo Detection
+      if (existingPaths.contains(file.path)) {
+        duplicatesCount++;
+        continue;
+      }
+
+      // 2. Suggestion 32: Filter unsupported file types (including HEIC on Android)
       if (ext.isNotEmpty && !kSupportedImageExtensions.contains(ext)) {
         skippedNames.add(baseName);
         continue;
@@ -282,7 +299,7 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
         int decodedSize = width * height * 4;
         bool wasDownscaled = false;
 
-        // 2. Downscale if decoded size > 50 MB (width * height * 4 > 50 MB)
+        // 3. Downscale if decoded size > 50 MB (width * height * 4 > 50 MB)
         if (decodedSize > kMaxDecodedSizeBytes) {
           final scaleFactor = sqrt(kMaxDecodedSizeBytes / decodedSize) * 0.95;
           final targetWidth = max(1, (width * scaleFactor).round());
@@ -313,15 +330,32 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
             wasAutoDownscaled: wasDownscaled,
           ),
         );
+        existingPaths.add(file.path);
       } catch (_) {
         skippedNames.add(baseName);
       }
     }
 
+    String? warning;
+    if (files.isNotEmpty && newItems.isEmpty && duplicatesCount == files.length) {
+      warning = 'No new photos added — all selected photos are already in the session.';
+    }
+
     state = state.copyWith(
       photos: [...state.photos, ...newItems],
       unsupportedSkippedFiles: skippedNames,
+      duplicateSkippedCount: duplicatesCount,
+      validationWarning: warning ?? state.validationWarning,
       isLoading: false,
+    );
+  }
+
+  /// Append single photo item (e.g. from Scan Mode)
+  void appendPhotoItem(PhotoItem item) {
+    if (state.photos.any((p) => p.path == item.path)) return;
+    _pushUndoState();
+    state = state.copyWith(
+      photos: [...state.photos, item],
     );
   }
 
@@ -345,13 +379,14 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     state = state.copyWith(photos: updated);
   }
 
-  /// Rotate photo 90 degrees clockwise
+  /// Rotate photo 90 degrees clockwise & clear cachedBytes (Suggestion 31)
   void rotatePhoto(String id) {
     _pushUndoState();
     final updated = state.photos.map((p) {
       if (p.id == id) {
         return p.copyWith(
           rotationDegrees: (p.rotationDegrees + 90) % 360,
+          clearCachedBytes: true,
         );
       }
       return p;
@@ -359,13 +394,14 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     state = state.copyWith(photos: updated);
   }
 
-  /// Rotate photo 90 degrees counter-clockwise (CCW)
+  /// Rotate photo 90 degrees counter-clockwise (CCW) & clear cachedBytes (Suggestion 31)
   void rotatePhotoCounterClockwise(String id) {
     _pushUndoState();
     final updated = state.photos.map((p) {
       if (p.id == id) {
         return p.copyWith(
           rotationDegrees: (p.rotationDegrees - 90 + 360) % 360,
+          clearCachedBytes: true,
         );
       }
       return p;
@@ -397,13 +433,14 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     state = state.copyWith(photos: updated);
   }
 
-  /// Flip photo horizontally
+  /// Flip photo horizontally & clear cachedBytes (Suggestion 31)
   void flipPhotoHorizontal(String id) {
     _pushUndoState();
     final updated = state.photos.map((p) {
       if (p.id == id) {
         return p.copyWith(
           isFlippedHorizontally: !p.isFlippedHorizontally,
+          clearCachedBytes: true,
         );
       }
       return p;
@@ -411,13 +448,14 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     state = state.copyWith(photos: updated);
   }
 
-  /// Flip photo vertically
+  /// Flip photo vertically & clear cachedBytes (Suggestion 31)
   void flipPhotoVertical(String id) {
     _pushUndoState();
     final updated = state.photos.map((p) {
       if (p.id == id) {
         return p.copyWith(
           isFlippedVertically: !p.isFlippedVertically,
+          clearCachedBytes: true,
         );
       }
       return p;
@@ -425,22 +463,22 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     state = state.copyWith(photos: updated);
   }
 
-  /// Apply filter
+  /// Apply filter & clear cachedBytes (Suggestion 31)
   void applyPhotoFilter(String id, PhotoFilter filter) {
     _pushUndoState();
     final updated = state.photos.map((p) {
       if (p.id == id) {
-        return p.copyWith(filter: filter);
+        return p.copyWith(filter: filter, clearCachedBytes: true);
       }
       return p;
     }).toList();
     state = state.copyWith(photos: updated);
   }
 
-  /// Batch apply filter to all photos
+  /// Batch apply filter to all photos & clear cachedBytes (Suggestion 31)
   void applyFilterToAll(PhotoFilter filter) {
     _pushUndoState();
-    final updated = state.photos.map((p) => p.copyWith(filter: filter)).toList();
+    final updated = state.photos.map((p) => p.copyWith(filter: filter, clearCachedBytes: true)).toList();
     state = state.copyWith(photos: updated);
   }
 
@@ -478,9 +516,21 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     );
   }
 
+  /// Cancel ongoing PDF generation (Suggestion 25)
+  void cancelPdfGeneration() {
+    _cancelRequested = true;
+    state = state.copyWith(
+      isLoading: false,
+      isCancelled: true,
+      progressMessage: 'Generation cancelled',
+      progressPercent: 0.0,
+    );
+  }
+
   /// Generate PDF document with progress reporting and storage validation
   Future<Uint8List?> generatePdf() async {
     if (state.photos.isEmpty) return null;
+    _cancelRequested = false;
 
     // Check available storage threshold before generation (Requirement 3)
     final hasSpace = await FileUtils.hasSufficientStorage(minRequiredBytes: 50 * 1024 * 1024);
@@ -495,6 +545,7 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     try {
       state = state.copyWith(
         isLoading: true,
+        isCancelled: false,
         errorMessage: null,
         progressPercent: 0.0,
         progressMessage: 'Initializing document...',
@@ -504,12 +555,25 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
         photos: state.photos,
         config: state.config,
         onPageProgress: (currentPage, totalPages) {
+          if (_cancelRequested) {
+            throw Exception('PDF generation cancelled by user.');
+          }
           state = state.copyWith(
             progressMessage: 'Generating page $currentPage of $totalPages…',
             progressPercent: currentPage / totalPages,
           );
         },
       );
+
+      if (_cancelRequested) {
+        state = state.copyWith(
+          isLoading: false,
+          isCancelled: true,
+          progressMessage: null,
+          progressPercent: 0.0,
+        );
+        return null;
+      }
 
       state = state.copyWith(
         isLoading: false,
@@ -519,6 +583,14 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
       );
       return bytes;
     } catch (e) {
+      if (_cancelRequested) {
+        state = state.copyWith(
+          isLoading: false,
+          isCancelled: true,
+          progressMessage: null,
+        );
+        return null;
+      }
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'PDF generation failed: $e',

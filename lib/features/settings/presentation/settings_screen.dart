@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:pdf_maker/features/settings/presentation/about_legal_screen.dart';
 import 'package:pdf_maker/core/constants/app_colors.dart';
-import 'package:pdf_maker/features/history_and_settings/services/settings_service.dart';
+import 'package:pdf_maker/features/settings/services/settings_service.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -96,6 +98,67 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 28),
           Row(
             children: [
+              const Icon(Icons.document_scanner_outlined, size: 18, color: AppColors.primary),
+              const SizedBox(width: 8),
+              Text(
+                'OCR & DOCUMENT INTELLIGENCE',
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            decoration: BoxDecoration(
+              color: isDark ? AppColors.surfaceDark : AppColors.surfaceLight,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: isDark ? AppColors.borderDark : AppColors.borderLight,
+                width: 1.2,
+              ),
+            ),
+            child: FutureBuilder<bool>(
+              future: SharedPreferences.getInstance().then((p) => p.getBool('enable_ocr_searchable_pdf') ?? false),
+              builder: (context, snapshot) {
+                final ocrEnabled = snapshot.data ?? false;
+                return SwitchListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  secondary: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.search_rounded, color: AppColors.primary, size: 20),
+                  ),
+                  title: Text(
+                    'Make PDF Searchable (OCR)',
+                    style: GoogleFonts.sora(fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  subtitle: Text(
+                    'Run on-device text recognition to add searchable text layers.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDark ? AppColors.textSecondaryDark : AppColors.textSecondaryLight,
+                    ),
+                  ),
+                  value: ocrEnabled,
+                  onChanged: (val) async {
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setBool('enable_ocr_searchable_pdf', val);
+                    (context as Element).markNeedsBuild();
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 28),
+          Row(
+            children: [
               const Icon(Icons.shield_outlined, size: 18, color: AppColors.secondary),
               const SizedBox(width: 8),
               Text(
@@ -152,6 +215,54 @@ class SettingsScreen extends ConsumerWidget {
                   height: 1,
                   color: isDark ? AppColors.borderDark : AppColors.borderLight,
                 ),
+                Divider(
+                  height: 1,
+                  color: isDark ? AppColors.borderDark : AppColors.borderLight,
+                ),
+                ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.secondary.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.high_quality_rounded,
+                        color: AppColors.secondary, size: 20),
+                  ),
+                  title: Text(
+                    'Default PDF Quality',
+                    style: GoogleFonts.sora(
+                        fontWeight: FontWeight.w700, fontSize: 14),
+                  ),
+                  subtitle: const Text('Default image compression level for new documents', style: TextStyle(fontSize: 12)),
+                  trailing: FutureBuilder<String>(
+                    future: SharedPreferences.getInstance().then((p) => p.getString('default_pdf_quality') ?? 'Balanced'),
+                    builder: (context, snapshot) {
+                      final current = snapshot.data ?? 'Balanced';
+                      return DropdownButton<String>(
+                        value: current,
+                        underline: const SizedBox(),
+                        items: ['Draft (72 DPI)', 'Balanced (150 DPI)', 'High (220 DPI)', 'Ultra HD (300 DPI)'].map((q) {
+                          final key = q.split(' ').first;
+                          return DropdownMenuItem(value: key, child: Text(q, style: const TextStyle(fontSize: 12)));
+                        }).toList(),
+                        onChanged: (val) async {
+                          if (val != null) {
+                            final prefs = await SharedPreferences.getInstance();
+                            await prefs.setString('default_pdf_quality', val);
+                            (context as Element).markNeedsBuild();
+                          }
+                        },
+                      );
+                    },
+                  ),
+                ),
+                Divider(
+                  height: 1,
+                  color: isDark ? AppColors.borderDark : AppColors.borderLight,
+                ),
                 ListTile(
                   contentPadding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -161,30 +272,22 @@ class SettingsScreen extends ConsumerWidget {
                       color: AppColors.primary.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.verified_rounded,
+                    child: const Icon(Icons.info_outline_rounded,
                         color: AppColors.primary, size: 20),
                   ),
                   title: Text(
-                    'Version & Engine',
+                    'About & Open-Source Licenses',
                     style: GoogleFonts.sora(
                         fontWeight: FontWeight.w700, fontSize: 14),
                   ),
-                  trailing: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      gradient: AppColors.cyanVioletGradient,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      'v1.0.0 PRO',
-                      style: GoogleFonts.jetBrainsMono(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ),
+                  subtitle: const Text('Version, legal attribution & package licenses', style: TextStyle(fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const AboutLegalScreen()),
+                    );
+                  },
                 ),
               ],
             ),

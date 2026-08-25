@@ -54,11 +54,12 @@ class PhotoItem {
     int? height,
     int? originalSizeBytes,
     bool? wasAutoDownscaled,
+    bool clearCachedBytes = false,
   }) {
     return PhotoItem(
       id: id ?? this.id,
       path: path ?? this.path,
-      cachedBytes: cachedBytes ?? this.cachedBytes,
+      cachedBytes: clearCachedBytes ? null : (cachedBytes ?? this.cachedBytes),
       rotationDegrees: rotationDegrees ?? this.rotationDegrees,
       isFlippedHorizontally: isFlippedHorizontally ?? this.isFlippedHorizontally,
       isFlippedVertically: isFlippedVertically ?? this.isFlippedVertically,

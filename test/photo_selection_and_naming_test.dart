@@ -11,8 +11,13 @@ void main() {
       expect(kSupportedImageExtensions.contains('.jpeg'), isTrue);
       expect(kSupportedImageExtensions.contains('.png'), isTrue);
       expect(kSupportedImageExtensions.contains('.webp'), isTrue);
-      expect(kSupportedImageExtensions.contains('.heic'), isTrue);
-      expect(kSupportedImageExtensions.contains('.heif'), isTrue);
+      if (Platform.isIOS) {
+        expect(kSupportedImageExtensions.contains('.heic'), isTrue);
+        expect(kSupportedImageExtensions.contains('.heif'), isTrue);
+      } else {
+        expect(kSupportedImageExtensions.contains('.heic'), isFalse);
+        expect(kSupportedImageExtensions.contains('.heif'), isFalse);
+      }
       expect(kSupportedImageExtensions.contains('.exe'), isFalse);
       expect(kSupportedImageExtensions.contains('.pdf'), isFalse);
       expect(kSupportedImageExtensions.contains('.txt'), isFalse);

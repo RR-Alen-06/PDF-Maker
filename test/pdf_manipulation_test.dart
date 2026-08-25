@@ -2,7 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
-import 'package:pdf_maker/features/tools/pdf_manipulation/services/pdf_manipulation_service.dart';
+import 'package:pdf_maker/features/tools/pdf_manipulation/services/pdf_operations_service.dart';
 import 'package:pdf_maker/features/photo_to_pdf/domain/models/photo_item.dart';
 import 'package:pdf_maker/features/photo_to_pdf/domain/models/pdf_export_config.dart';
 import 'package:pdf_maker/features/photo_to_pdf/services/pdf_generator_service.dart';

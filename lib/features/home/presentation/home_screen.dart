@@ -4,9 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
-import 'package:pdf_maker/features/history_and_settings/presentation/history_screen.dart';
-import 'package:pdf_maker/features/history_and_settings/presentation/settings_screen.dart';
-import 'package:pdf_maker/features/history_and_settings/services/history_storage_service.dart';
+import 'package:pdf_maker/features/history/presentation/history_screen.dart';
+import 'package:pdf_maker/features/settings/presentation/settings_screen.dart';
+import 'package:pdf_maker/features/history/services/history_storage_service.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/controllers/photo_to_pdf_controller.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/screens/photo_arranger_screen.dart';
 import 'package:pdf_maker/features/tools/image_compressor/presentation/image_compressor_screen.dart';
@@ -14,6 +14,11 @@ import 'package:pdf_maker/features/tools/pdf_compressor/presentation/pdf_compres
 import 'package:pdf_maker/features/tools/pdf_manipulation/presentation/pdf_merge_screen.dart';
 import 'package:pdf_maker/features/tools/pdf_manipulation/presentation/pdf_password_screen.dart';
 import 'package:pdf_maker/features/tools/pdf_manipulation/presentation/pdf_split_screen.dart';
+import 'package:pdf_maker/features/tools/pdf_manipulation/presentation/pdf_page_editor_screen.dart';
+import 'package:pdf_maker/features/tools/scan_mode/presentation/scan_mode_screen.dart';
+import 'package:pdf_maker/features/tools/pdf_to_images/presentation/pdf_to_images_screen.dart';
+import 'package:pdf_maker/features/tools/batch_processing/presentation/batch_processing_screen.dart';
+import 'package:pdf_maker/features/settings/presentation/export_settings_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -31,6 +36,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void initState() {
     super.initState();
     _loadRecentFiles();
+    FileUtils.cleanupStaleTempFiles();
   }
 
   Future<void> _loadRecentFiles() async {
@@ -103,6 +109,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
       );
       ref.read(photoToPdfProvider.notifier).clearSkippedFilesNotification();
+    }
+
+    // 1b. Suggestion 23: Duplicate Photo Detection Notification
+    if (pdfState.duplicateSkippedCount > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${pdfState.duplicateSkippedCount} duplicate photo(s) skipped.'),
+          backgroundColor: AppColors.tertiary,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
 
     // 2. Show inline validation warning if < 2 photos
@@ -723,25 +740,77 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           },
         ),
         _buildVibrantToolCard(
-          title: 'Doc Scanner',
+          title: 'PDF Page Editor',
+          subtitle: 'Reorder & rotate',
+          icon: Icons.dashboard_customize_rounded,
+          gradient: AppColors.violetIndigoGradient,
+          glowColor: AppColors.neonViolet,
+          isDark: isDark,
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PdfPageEditorScreen()),
+            );
+            _loadRecentFiles();
+          },
+        ),
+        _buildVibrantToolCard(
+          title: 'Scan Mode',
           subtitle: 'Camera scan',
           icon: Icons.document_scanner_rounded,
           gradient: AppColors.emeraldCyanGradient,
           glowColor: AppColors.neonEmerald,
           isDark: isDark,
           onTap: () async {
-            await ref
-                .read(photoToPdfProvider.notifier)
-                .takePhotoFromCamera();
-            final count = ref.read(photoToPdfProvider).photos.length;
-            if (count > 0 && context.mounted) {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const PhotoArrangerScreen()),
-              );
-              _loadRecentFiles();
-            }
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ScanModeScreen()),
+            );
+            _loadRecentFiles();
+          },
+        ),
+        _buildVibrantToolCard(
+          title: 'PDF to Images',
+          subtitle: 'Extract JPG/PNG',
+          icon: Icons.collections_rounded,
+          gradient: AppColors.cyanVioletGradient,
+          glowColor: AppColors.secondary,
+          isDark: isDark,
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PdfToImagesScreen()),
+            );
+            _loadRecentFiles();
+          },
+        ),
+        _buildVibrantToolCard(
+          title: 'Batch Processing',
+          subtitle: 'Bulk operations',
+          icon: Icons.bolt_rounded,
+          gradient: AppColors.pinkOrangeGradient,
+          glowColor: AppColors.primary,
+          isDark: isDark,
+          onTap: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const BatchProcessingScreen()),
+            );
+            _loadRecentFiles();
+          },
+        ),
+        _buildVibrantToolCard(
+          title: 'Export Settings',
+          subtitle: 'Folder & pattern',
+          icon: Icons.folder_special_rounded,
+          gradient: AppColors.amberOrangeGradient,
+          glowColor: AppColors.tertiary,
+          isDark: isDark,
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ExportSettingsScreen()),
+            );
           },
         ),
       ],
@@ -898,6 +967,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 color: isDark
                     ? AppColors.textSecondaryDark
                     : AppColors.textSecondaryLight,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _handlePhotoPicking,
+              icon: const Icon(Icons.add_photo_alternate_rounded),
+              label: const Text('Create your first PDF'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
           ],

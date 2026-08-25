@@ -5,7 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:path/path.dart' as p;
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
-import 'package:pdf_maker/features/history_and_settings/services/history_storage_service.dart';
+import 'package:pdf_maker/features/history/services/history_storage_service.dart';
 import 'package:pdf_maker/features/tools/pdf_compressor/services/pdf_compressor_service.dart';
 
 class PdfCompressorScreen extends StatefulWidget {
@@ -73,7 +73,7 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
           ],
         ),
         content: const Text(
-          'This PDF contains selectable text. Compression will flatten it into images, making text non-selectable. Proceed?',
+          'This PDF contains selectable text. Compressing with the available method will convert all text to flat images, making it non-searchable and non-copyable. Do you want to proceed?',
           style: TextStyle(fontSize: 14, height: 1.4),
         ),
         actions: [
@@ -417,6 +417,14 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
                                 ],
                               ),
                             ),
+                            if (_result!.hasSelectableText) ...[
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Note: Text content in this PDF has been flattened to images.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
+                              ),
+                            ],
                           ],
                         ),
                       ),

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf_maker/core/constants/page_sizes.dart';
+import 'overlay_config.dart';
 
 @immutable
 class PdfExportConfig {
@@ -16,14 +17,33 @@ class PdfExportConfig {
   final BoxFit imageFit; // contain / cover
   final bool autoRotateOrientation;
 
-  // Watermark and Header/Footer
-  final String? watermarkText;
-  final double watermarkOpacity;
-  final double watermarkFontSize;
+  // Header and Footer Text (Legacy & Extra)
   final String? headerText;
   final String? footerText;
-  final bool includePageNumbers;
-  final String pageNumberFormat; // 'Page {page} of {total}'
+
+  // Requirement 11: Overlay Settings (Independently toggled)
+  // 1. Page Numbers
+  final bool enablePageNumbers;
+  final PageNumberFormatPreset pageNumberFormatPreset;
+  final OverlayGridPosition pageNumberPosition;
+  final double pageNumberFontSize; // 8 - 36 pt, step 2
+
+  // 2. Date Stamp
+  final bool enableDateStamp;
+  final DateStampSource dateStampSource;
+  final DateTime? customDate;
+  final DateStampFormatPreset dateStampFormatPreset;
+  final OverlayGridPosition dateStampPosition;
+  final double dateStampFontSize;
+
+  // 3. Watermark Text
+  final bool enableWatermark;
+  final String? watermarkText; // max 100 characters
+  final String watermarkFont;
+  final double watermarkOpacity; // 0.1 to 1.0 (10% - 100%)
+  final double watermarkRotationAngle; // 0 - 360 deg
+  final OverlayGridPosition watermarkPosition;
+  final double watermarkFontSize;
 
   // Password Security
   final String? userPassword;
@@ -40,16 +60,39 @@ class PdfExportConfig {
     this.qualityPreset = ImageQualityPreset.high,
     this.imageFit = BoxFit.contain,
     this.autoRotateOrientation = false,
-    this.watermarkText,
-    this.watermarkOpacity = 0.2,
-    this.watermarkFontSize = 36.0,
     this.headerText,
     this.footerText,
-    this.includePageNumbers = true,
-    this.pageNumberFormat = 'Page {page} of {total}',
+
+    // Overlay defaults
+    this.enablePageNumbers = true,
+    this.pageNumberFormatPreset = PageNumberFormatPreset.pageNOfTotal,
+    this.pageNumberPosition = OverlayGridPosition.bottomRight,
+    this.pageNumberFontSize = 10.0,
+
+    this.enableDateStamp = false,
+    this.dateStampSource = DateStampSource.auto,
+    this.customDate,
+    this.dateStampFormatPreset = DateStampFormatPreset.yyyyMmDd,
+    this.dateStampPosition = OverlayGridPosition.bottomLeft,
+    this.dateStampFontSize = 10.0,
+
+    this.enableWatermark = false,
+    this.watermarkText,
+    this.watermarkFont = 'Helvetica',
+    this.watermarkOpacity = 0.2,
+    this.watermarkRotationAngle = 315.0, // diagonal
+    this.watermarkPosition = OverlayGridPosition.middleCenter,
+    this.watermarkFontSize = 36.0,
+
     this.userPassword,
     this.ownerPassword,
   });
+
+  /// Check if Page Numbers and Date Stamp overlap in grid position
+  bool get hasOverlayPositionConflict =>
+      enablePageNumbers &&
+      enableDateStamp &&
+      pageNumberPosition == dateStampPosition;
 
   /// Convert margin in mm to points (1 mm = 2.83465 pt)
   double get marginPt => marginMm * 2.83465;
@@ -68,13 +111,25 @@ class PdfExportConfig {
     ImageQualityPreset? qualityPreset,
     BoxFit? imageFit,
     bool? autoRotateOrientation,
-    String? watermarkText,
-    double? watermarkOpacity,
-    double? watermarkFontSize,
     String? headerText,
     String? footerText,
-    bool? includePageNumbers,
-    String? pageNumberFormat,
+    bool? enablePageNumbers,
+    PageNumberFormatPreset? pageNumberFormatPreset,
+    OverlayGridPosition? pageNumberPosition,
+    double? pageNumberFontSize,
+    bool? enableDateStamp,
+    DateStampSource? dateStampSource,
+    DateTime? customDate,
+    DateStampFormatPreset? dateStampFormatPreset,
+    OverlayGridPosition? dateStampPosition,
+    double? dateStampFontSize,
+    bool? enableWatermark,
+    String? watermarkText,
+    String? watermarkFont,
+    double? watermarkOpacity,
+    double? watermarkRotationAngle,
+    OverlayGridPosition? watermarkPosition,
+    double? watermarkFontSize,
     String? userPassword,
     String? ownerPassword,
   }) {
@@ -90,13 +145,28 @@ class PdfExportConfig {
       imageFit: imageFit ?? this.imageFit,
       autoRotateOrientation:
           autoRotateOrientation ?? this.autoRotateOrientation,
-      watermarkText: watermarkText ?? this.watermarkText,
-      watermarkOpacity: watermarkOpacity ?? this.watermarkOpacity,
-      watermarkFontSize: watermarkFontSize ?? this.watermarkFontSize,
       headerText: headerText ?? this.headerText,
       footerText: footerText ?? this.footerText,
-      includePageNumbers: includePageNumbers ?? this.includePageNumbers,
-      pageNumberFormat: pageNumberFormat ?? this.pageNumberFormat,
+      enablePageNumbers: enablePageNumbers ?? this.enablePageNumbers,
+      pageNumberFormatPreset:
+          pageNumberFormatPreset ?? this.pageNumberFormatPreset,
+      pageNumberPosition: pageNumberPosition ?? this.pageNumberPosition,
+      pageNumberFontSize: pageNumberFontSize ?? this.pageNumberFontSize,
+      enableDateStamp: enableDateStamp ?? this.enableDateStamp,
+      dateStampSource: dateStampSource ?? this.dateStampSource,
+      customDate: customDate ?? this.customDate,
+      dateStampFormatPreset:
+          dateStampFormatPreset ?? this.dateStampFormatPreset,
+      dateStampPosition: dateStampPosition ?? this.dateStampPosition,
+      dateStampFontSize: dateStampFontSize ?? this.dateStampFontSize,
+      enableWatermark: enableWatermark ?? this.enableWatermark,
+      watermarkText: watermarkText ?? this.watermarkText,
+      watermarkFont: watermarkFont ?? this.watermarkFont,
+      watermarkOpacity: watermarkOpacity ?? this.watermarkOpacity,
+      watermarkRotationAngle:
+          watermarkRotationAngle ?? this.watermarkRotationAngle,
+      watermarkPosition: watermarkPosition ?? this.watermarkPosition,
+      watermarkFontSize: watermarkFontSize ?? this.watermarkFontSize,
       userPassword: userPassword ?? this.userPassword,
       ownerPassword: ownerPassword ?? this.ownerPassword,
     );
@@ -112,10 +182,25 @@ class PdfExportConfig {
       'photoSpacingMm': photoSpacingMm,
       'layout': layout.name,
       'qualityPreset': qualityPreset.name,
-      'includePageNumbers': includePageNumbers,
-      'watermarkText': watermarkText,
       'headerText': headerText,
       'footerText': footerText,
+      'enablePageNumbers': enablePageNumbers,
+      'pageNumberFormatPreset': pageNumberFormatPreset.name,
+      'pageNumberPosition': pageNumberPosition.name,
+      'pageNumberFontSize': pageNumberFontSize,
+      'enableDateStamp': enableDateStamp,
+      'dateStampSource': dateStampSource.name,
+      'customDate': customDate?.toIso8601String(),
+      'dateStampFormatPreset': dateStampFormatPreset.name,
+      'dateStampPosition': dateStampPosition.name,
+      'dateStampFontSize': dateStampFontSize,
+      'enableWatermark': enableWatermark,
+      'watermarkText': watermarkText,
+      'watermarkFont': watermarkFont,
+      'watermarkOpacity': watermarkOpacity,
+      'watermarkRotationAngle': watermarkRotationAngle,
+      'watermarkPosition': watermarkPosition.name,
+      'watermarkFontSize': watermarkFontSize,
     };
   }
 
@@ -141,10 +226,46 @@ class PdfExportConfig {
         (e) => e.name == json['qualityPreset'],
         orElse: () => ImageQualityPreset.high,
       ),
-      includePageNumbers: json['includePageNumbers'] as bool? ?? true,
-      watermarkText: json['watermarkText'] as String?,
       headerText: json['headerText'] as String?,
       footerText: json['footerText'] as String?,
+      enablePageNumbers: json['enablePageNumbers'] as bool? ?? true,
+      pageNumberFormatPreset: PageNumberFormatPreset.values.firstWhere(
+        (e) => e.name == json['pageNumberFormatPreset'],
+        orElse: () => PageNumberFormatPreset.pageNOfTotal,
+      ),
+      pageNumberPosition: OverlayGridPosition.values.firstWhere(
+        (e) => e.name == json['pageNumberPosition'],
+        orElse: () => OverlayGridPosition.bottomRight,
+      ),
+      pageNumberFontSize: (json['pageNumberFontSize'] as num?)?.toDouble() ?? 10.0,
+      enableDateStamp: json['enableDateStamp'] as bool? ?? false,
+      dateStampSource: DateStampSource.values.firstWhere(
+        (e) => e.name == json['dateStampSource'],
+        orElse: () => DateStampSource.auto,
+      ),
+      customDate: json['customDate'] != null
+          ? DateTime.tryParse(json['customDate'] as String)
+          : null,
+      dateStampFormatPreset: DateStampFormatPreset.values.firstWhere(
+        (e) => e.name == json['dateStampFormatPreset'],
+        orElse: () => DateStampFormatPreset.yyyyMmDd,
+      ),
+      dateStampPosition: OverlayGridPosition.values.firstWhere(
+        (e) => e.name == json['dateStampPosition'],
+        orElse: () => OverlayGridPosition.bottomLeft,
+      ),
+      dateStampFontSize: (json['dateStampFontSize'] as num?)?.toDouble() ?? 10.0,
+      enableWatermark: json['enableWatermark'] as bool? ?? false,
+      watermarkText: json['watermarkText'] as String?,
+      watermarkFont: json['watermarkFont'] as String? ?? 'Helvetica',
+      watermarkOpacity: (json['watermarkOpacity'] as num?)?.toDouble() ?? 0.2,
+      watermarkRotationAngle:
+          (json['watermarkRotationAngle'] as num?)?.toDouble() ?? 315.0,
+      watermarkPosition: OverlayGridPosition.values.firstWhere(
+        (e) => e.name == json['watermarkPosition'],
+        orElse: () => OverlayGridPosition.middleCenter,
+      ),
+      watermarkFontSize: (json['watermarkFontSize'] as num?)?.toDouble() ?? 36.0,
     );
   }
 

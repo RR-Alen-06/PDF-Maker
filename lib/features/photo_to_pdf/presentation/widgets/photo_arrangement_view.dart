@@ -120,30 +120,41 @@ class PageGridArrangementView extends StatelessWidget {
     final photosPerPage = layout.photosPerPage;
     final totalPages = (photos.length / photosPerPage).ceil();
 
-    return ListView.builder(
-      padding: const EdgeInsets.only(top: 8, bottom: 90, left: 16, right: 16),
-      itemCount: totalPages > 0 ? totalPages : 1,
-      itemBuilder: (context, pageIndex) {
-        final startIndex = pageIndex * photosPerPage;
-        final endIndex = (startIndex + photosPerPage > photos.length)
-            ? photos.length
-            : startIndex + photosPerPage;
-        final pagePhotos = photos.sublist(startIndex, endIndex);
-        final emptySlotsCount = photosPerPage - pagePhotos.length;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final isMedium = width >= 600 && width <= 840;
+        final isExpanded = width > 840;
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          decoration: BoxDecoration(
-            color: isDark ? AppColors.surfaceDark : AppColors.surfaceLight,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: isDark ? AppColors.borderDark : AppColors.borderLight,
-              width: 1.2,
-            ),
+        return GridView.builder(
+          padding: const EdgeInsets.only(top: 8, bottom: 90, left: 16, right: 16),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: isExpanded ? 3 : (isMedium ? 2 : 1),
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: isExpanded ? 0.75 : (isMedium ? 0.8 : 0.95),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+          itemCount: totalPages > 0 ? totalPages : 1,
+          itemBuilder: (context, pageIndex) {
+            final startIndex = pageIndex * photosPerPage;
+            final endIndex = (startIndex + photosPerPage > photos.length)
+                ? photos.length
+                : startIndex + photosPerPage;
+            final pagePhotos = photos.sublist(startIndex, endIndex);
+            final emptySlotsCount = photosPerPage - pagePhotos.length;
+
+            return Container(
+              decoration: BoxDecoration(
+                color: isDark ? AppColors.surfaceDark : AppColors.surfaceLight,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isDark ? AppColors.borderDark : AppColors.borderLight,
+                  width: 1.2,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
               // Page header bar
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -198,6 +209,8 @@ class PageGridArrangementView extends StatelessWidget {
             ],
           ),
         );
+      },
+    );
       },
     );
   }
@@ -340,24 +353,47 @@ class PageGridArrangementView extends StatelessWidget {
               ),
             ),
 
-            // Photo Index Badge
+            // Photo Index Badge & Resized Badge
             Positioned(
               top: 6,
               left: 6,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.75),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '#${globalIndex + 1}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '#${globalIndex + 1}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
-                ),
+                  if (item.wasAutoDownscaled) ...[
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.tertiary.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        'Resized',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
 
