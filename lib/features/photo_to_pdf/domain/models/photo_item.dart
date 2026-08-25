@@ -23,6 +23,7 @@ class PhotoItem {
   final int width;
   final int height;
   final int originalSizeBytes;
+  final bool wasAutoDownscaled;
 
   const PhotoItem({
     required this.id,
@@ -35,7 +36,11 @@ class PhotoItem {
     this.width = 0,
     this.height = 0,
     this.originalSizeBytes = 0,
+    this.wasAutoDownscaled = false,
   });
+
+  /// Approximate uncompressed RGBA decoded size in bytes (width * height * 4)
+  int get decodedSizeBytes => width * height * 4;
 
   PhotoItem copyWith({
     String? id,
@@ -48,6 +53,7 @@ class PhotoItem {
     int? width,
     int? height,
     int? originalSizeBytes,
+    bool? wasAutoDownscaled,
   }) {
     return PhotoItem(
       id: id ?? this.id,
@@ -60,6 +66,7 @@ class PhotoItem {
       width: width ?? this.width,
       height: height ?? this.height,
       originalSizeBytes: originalSizeBytes ?? this.originalSizeBytes,
+      wasAutoDownscaled: wasAutoDownscaled ?? this.wasAutoDownscaled,
     );
   }
 

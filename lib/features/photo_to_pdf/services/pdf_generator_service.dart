@@ -8,15 +8,24 @@ import '../domain/models/photo_item.dart';
 import '../domain/models/pdf_export_config.dart';
 import 'image_filter_service.dart';
 
+typedef PdfProgressCallback = void Function(int currentPage, int totalPages);
+
 class PdfGeneratorService {
   PdfGeneratorService._();
 
-  /// Generates a complete multi-page PDF document bytes from photo items and layout configuration
+  /// Generates a complete multi-page PDF/1.4 document bytes from photo items and layout configuration.
+  /// Reports real-time page generation progress through [onPageProgress].
   static Future<Uint8List> generatePdf({
     required List<PhotoItem> photos,
     required PdfExportConfig config,
+    PdfProgressCallback? onPageProgress,
   }) async {
-    final pdf = pw.Document();
+    final pdf = pw.Document(
+      version: PdfVersion.pdf_1_4,
+      compress: true,
+      title: 'PDF Maker Document',
+      author: 'Photo-to-PDF Maker Studio',
+    );
 
     final margin = config.marginPreset == PageMarginPreset.none
         ? 0.0
@@ -31,6 +40,8 @@ class PdfGeneratorService {
     final totalPages = (photos.length / photosPerPage).ceil();
 
     for (int pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+      onPageProgress?.call(pageIndex + 1, totalPages);
+
       final startIndex = pageIndex * photosPerPage;
       final endIndex = (startIndex + photosPerPage > photos.length)
           ? photos.length
@@ -51,7 +62,7 @@ class PdfGeneratorService {
           build: (pw.Context context) {
             return pw.Stack(
               children: [
-                // 1. Photo Layout Grid
+                // 1. Photo Layout Grid with empty slots filled with blank area
                 _buildPhotoLayout(
                   images: processedImages,
                   layout: config.layout,
@@ -140,7 +151,8 @@ class PdfGeneratorService {
     return rawPdfBytes;
   }
 
-  /// Builds the visual grid layout according to selected PdfPhotoLayout
+  /// Builds the visual grid layout according to selected PdfPhotoLayout.
+  /// Partially filled slots are rendered with blank space.
   static pw.Widget _buildPhotoLayout({
     required List<pw.MemoryImage> images,
     required PdfPhotoLayout layout,
@@ -159,10 +171,12 @@ class PdfGeneratorService {
         return pw.Column(
           children: [
             pw.Expanded(child: pw.Center(child: pw.Image(images[0], fit: fit))),
-            if (images.length > 1) ...[
-              pw.SizedBox(height: spacing),
-              pw.Expanded(child: pw.Center(child: pw.Image(images[1], fit: fit))),
-            ],
+            pw.SizedBox(height: spacing),
+            pw.Expanded(
+              child: images.length > 1
+                  ? pw.Center(child: pw.Image(images[1], fit: fit))
+                  : pw.Container(),
+            ),
           ],
         );
 
@@ -170,19 +184,25 @@ class PdfGeneratorService {
         return pw.Row(
           children: [
             pw.Expanded(child: pw.Center(child: pw.Image(images[0], fit: fit))),
-            if (images.length > 1) ...[
-              pw.SizedBox(width: spacing),
-              pw.Expanded(child: pw.Center(child: pw.Image(images[1], fit: fit))),
-            ],
+            pw.SizedBox(width: spacing),
+            pw.Expanded(
+              child: images.length > 1
+                  ? pw.Center(child: pw.Image(images[1], fit: fit))
+                  : pw.Container(),
+            ),
           ],
         );
 
       case PdfPhotoLayout.threePerPage:
         return pw.Column(
           children: [
-            for (int i = 0; i < images.length; i++) ...[
-              pw.Expanded(child: pw.Center(child: pw.Image(images[i], fit: fit))),
-              if (i < images.length - 1) pw.SizedBox(height: spacing),
+            for (int i = 0; i < 3; i++) ...[
+              pw.Expanded(
+                child: i < images.length
+                    ? pw.Center(child: pw.Image(images[i], fit: fit))
+                    : pw.Container(),
+              ),
+              if (i < 2) pw.SizedBox(height: spacing),
             ],
           ],
         );
@@ -194,28 +214,33 @@ class PdfGeneratorService {
               child: pw.Row(
                 children: [
                   pw.Expanded(child: pw.Center(child: pw.Image(images[0], fit: fit))),
-                  if (images.length > 1) ...[
-                    pw.SizedBox(width: spacing),
-                    pw.Expanded(child: pw.Center(child: pw.Image(images[1], fit: fit))),
-                  ],
+                  pw.SizedBox(width: spacing),
+                  pw.Expanded(
+                    child: images.length > 1
+                        ? pw.Center(child: pw.Image(images[1], fit: fit))
+                        : pw.Container(),
+                  ),
                 ],
               ),
             ),
-            if (images.length > 2) ...[
-              pw.SizedBox(height: spacing),
-              pw.Expanded(
-                child: pw.Row(
-                  children: [
-                    pw.Expanded(child: pw.Center(child: pw.Image(images[2], fit: fit))),
-                    if (images.length > 3) ...[
-                      pw.SizedBox(width: spacing),
-                      pw.Expanded(child: pw.Center(child: pw.Image(images[3], fit: fit))),
-                    ] else
-                      pw.Spacer(),
-                  ],
-                ),
+            pw.SizedBox(height: spacing),
+            pw.Expanded(
+              child: pw.Row(
+                children: [
+                  pw.Expanded(
+                    child: images.length > 2
+                        ? pw.Center(child: pw.Image(images[2], fit: fit))
+                        : pw.Container(),
+                  ),
+                  pw.SizedBox(width: spacing),
+                  pw.Expanded(
+                    child: images.length > 3
+                        ? pw.Center(child: pw.Image(images[3], fit: fit))
+                        : pw.Container(),
+                  ),
+                ],
               ),
-            ],
+            ),
           ],
         );
 
@@ -223,21 +248,24 @@ class PdfGeneratorService {
         return pw.Column(
           children: [
             for (int row = 0; row < 3; row++) ...[
-              if (row * 2 < images.length)
-                pw.Expanded(
-                  child: pw.Row(
-                    children: [
-                      pw.Expanded(child: pw.Center(child: pw.Image(images[row * 2], fit: fit))),
-                      if (row * 2 + 1 < images.length) ...[
-                        pw.SizedBox(width: spacing),
-                        pw.Expanded(child: pw.Center(child: pw.Image(images[row * 2 + 1], fit: fit))),
-                      ] else
-                        pw.Spacer(),
-                    ],
-                  ),
+              pw.Expanded(
+                child: pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: row * 2 < images.length
+                          ? pw.Center(child: pw.Image(images[row * 2], fit: fit))
+                          : pw.Container(),
+                    ),
+                    pw.SizedBox(width: spacing),
+                    pw.Expanded(
+                      child: row * 2 + 1 < images.length
+                          ? pw.Center(child: pw.Image(images[row * 2 + 1], fit: fit))
+                          : pw.Container(),
+                    ),
+                  ],
                 ),
-              if (row < 2 && (row + 1) * 2 < images.length)
-                pw.SizedBox(height: spacing),
+              ),
+              if (row < 2) pw.SizedBox(height: spacing),
             ],
           ],
         );

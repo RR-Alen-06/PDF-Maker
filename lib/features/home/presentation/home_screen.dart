@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
 import 'package:pdf_maker/features/history_and_settings/presentation/history_screen.dart';
@@ -45,6 +46,118 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (mounted) {
         setState(() => _loadingRecent = false);
       }
+    }
+  }
+
+  void _showPermissionRationaleDialog(String message, bool isCamera) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(
+              isCamera ? Icons.camera_alt_outlined : Icons.photo_library_outlined,
+              color: AppColors.primary,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'Permission Required',
+              style: GoogleFonts.sora(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(fontSize: 14, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await openAppSettings();
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _checkSkippedFilesAndWarnings() {
+    final pdfState = ref.read(photoToPdfProvider);
+
+    // 1. Show unsupported skipped files snackbar
+    if (pdfState.unsupportedSkippedFiles.isNotEmpty) {
+      final skippedList = pdfState.unsupportedSkippedFiles.join(', ');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Skipped unsupported image files: $skippedList'),
+          backgroundColor: AppColors.error,
+          duration: const Duration(seconds: 5),
+          showCloseIcon: true,
+        ),
+      );
+      ref.read(photoToPdfProvider.notifier).clearSkippedFilesNotification();
+    }
+
+    // 2. Show inline validation warning if < 2 photos
+    if (pdfState.validationWarning != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                pdfState.validationWarning!,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.error,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      ref.read(photoToPdfProvider.notifier).clearWarning();
+    }
+
+    // 3. Permission denied needs settings dialog
+    if (pdfState.permissionDeniedNeedSettings && pdfState.permissionDeniedMessage != null) {
+      _showPermissionRationaleDialog(pdfState.permissionDeniedMessage!, false);
+      ref.read(photoToPdfProvider.notifier).clearPermissionError();
+    }
+  }
+
+  Future<void> _handlePhotoPicking() async {
+    await ref.read(photoToPdfProvider.notifier).pickPhotosFromGallery();
+    _checkSkippedFilesAndWarnings();
+
+    final count = ref.read(photoToPdfProvider).photos.length;
+    if (count >= 2 && mounted) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const PhotoArrangerScreen()),
+      );
+      _loadRecentFiles();
+    }
+  }
+
+  Future<void> _handleCameraCapture() async {
+    await ref.read(photoToPdfProvider.notifier).takePhotoFromCamera();
+    _checkSkippedFilesAndWarnings();
+
+    final count = ref.read(photoToPdfProvider).photos.length;
+    if (count >= 2 && mounted) {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const PhotoArrangerScreen()),
+      );
+      _loadRecentFiles();
     }
   }
 
@@ -423,21 +536,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   children: [
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: () async {
-                          await ref
-                              .read(photoToPdfProvider.notifier)
-                              .pickPhotosFromGallery();
-                          final count =
-                              ref.read(photoToPdfProvider).photos.length;
-                          if (count > 0 && context.mounted) {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const PhotoArrangerScreen()),
-                            );
-                            _loadRecentFiles();
-                          }
-                        },
+                        onPressed: _handlePhotoPicking,
                         icon: const Icon(Icons.add_photo_alternate_rounded,
                             color: Color(0xFF160C30), size: 20),
                         label: Text(
@@ -470,21 +569,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         iconSize: 22,
                         padding: const EdgeInsets.all(13),
                         color: Colors.white,
-                        onPressed: () async {
-                          await ref
-                              .read(photoToPdfProvider.notifier)
-                              .takePhotoFromCamera();
-                          final count =
-                              ref.read(photoToPdfProvider).photos.length;
-                          if (count > 0 && context.mounted) {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const PhotoArrangerScreen()),
-                            );
-                            _loadRecentFiles();
-                          }
-                        },
+                        onPressed: _handleCameraCapture,
                         icon: const Icon(Icons.camera_alt_rounded),
                         tooltip: 'Camera Scan',
                       ),

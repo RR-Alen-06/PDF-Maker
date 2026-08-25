@@ -50,8 +50,8 @@ enum PageMarginPreset {
 
 enum PdfPhotoLayout {
   onePerPage('1 per page', 1, 1),
+  twoPerPageSideBySide('2 per page (Side-by-side)', 2, 1),
   twoPerPageStacked('2 per page (Stacked)', 1, 2),
-  twoPerPageSideBySide('2 per page (Side by side)', 2, 1),
   threePerPage('3 per page', 1, 3),
   fourPerPageGrid('4 per page (2x2 Grid)', 2, 2),
   sixPerPageGrid('6 per page (2x3 Grid)', 2, 3);
