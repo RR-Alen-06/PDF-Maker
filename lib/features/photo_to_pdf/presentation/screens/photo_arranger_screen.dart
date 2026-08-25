@@ -1,6 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:image/image.dart' as img;
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/features/photo_to_pdf/domain/models/photo_item.dart';
 import 'package:pdf_maker/features/photo_to_pdf/presentation/controllers/photo_to_pdf_controller.dart';
@@ -19,6 +22,61 @@ class PhotoArrangerScreen extends ConsumerStatefulWidget {
 
 class _PhotoArrangerScreenState extends ConsumerState<PhotoArrangerScreen> {
   bool _showPageLayoutView = true;
+
+  Future<void> _handleCropPhoto(PhotoItem item) async {
+    try {
+      final croppedFile = await ImageCropper().cropImage(
+        sourcePath: item.path,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Photo',
+            toolbarColor: const Color(0xFF160C30),
+            toolbarWidgetColor: Colors.white,
+            initAspectRatio: CropAspectRatioPreset.original,
+            lockAspectRatio: false,
+            aspectRatioPresets: [
+              CropAspectRatioPreset.original,
+              CropAspectRatioPreset.square,
+              CropAspectRatioPreset.ratio4x3,
+              CropAspectRatioPreset.ratio16x9,
+            ],
+          ),
+          IOSUiSettings(
+            title: 'Crop Photo',
+            aspectRatioPresets: [
+              CropAspectRatioPreset.original,
+              CropAspectRatioPreset.square,
+              CropAspectRatioPreset.ratio4x3,
+              CropAspectRatioPreset.ratio16x9,
+            ],
+          ),
+        ],
+      );
+
+      if (croppedFile != null) {
+        final bytes = await File(croppedFile.path).readAsBytes();
+        final decoded = img.decodeImage(bytes);
+        if (decoded != null && mounted) {
+          await ref.read(photoToPdfProvider.notifier).replacePhotoAfterCrop(
+                id: item.id,
+                newCroppedPath: croppedFile.path,
+                newCroppedBytes: bytes,
+                newWidth: decoded.width,
+                newHeight: decoded.height,
+              );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cropping failed: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    }
+  }
 
   void _showFilterSheet(BuildContext context, PhotoItem item) {
     showModalBottomSheet(
@@ -263,9 +321,13 @@ class _PhotoArrangerScreenState extends ConsumerState<PhotoArrangerScreen> {
                           photos: state.photos,
                           layout: state.config.layout,
                           onReorder: controller.reorderPhotos,
-                          onRotate: (item) => controller.rotatePhoto(item.id),
+                          onCrop: _handleCropPhoto,
+                          onRotateCW: (item) => controller.rotatePhoto(item.id),
+                          onRotateCCW: (item) => controller.rotatePhotoCounterClockwise(item.id),
                           onFlipHorizontal: (item) =>
                               controller.flipPhotoHorizontal(item.id),
+                          onFlipVertical: (item) =>
+                              controller.flipPhotoVertical(item.id),
                           onFilterTap: (item) => _showFilterSheet(context, item),
                           onDelete: (item) => controller.removePhoto(item.id),
                         )
@@ -280,9 +342,13 @@ class _PhotoArrangerScreenState extends ConsumerState<PhotoArrangerScreen> {
                               key: ValueKey(item.id),
                               item: item,
                               index: index,
-                              onRotate: () => controller.rotatePhoto(item.id),
+                              onCrop: () => _handleCropPhoto(item),
+                              onRotateCW: () => controller.rotatePhoto(item.id),
+                              onRotateCCW: () => controller.rotatePhotoCounterClockwise(item.id),
                               onFlipHorizontal: () =>
                                   controller.flipPhotoHorizontal(item.id),
+                              onFlipVertical: () =>
+                                  controller.flipPhotoVertical(item.id),
                               onFilterTap: () =>
                                   _showFilterSheet(context, item),
                               onDelete: () => controller.removePhoto(item.id),

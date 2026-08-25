@@ -42,6 +42,18 @@ class PdfCompressorService {
     }
   }
 
+  /// Get page count of existing PDF
+  static Future<int> getPageCount(Uint8List pdfBytes) async {
+    try {
+      final document = sf.PdfDocument(inputBytes: pdfBytes);
+      final count = document.pages.count;
+      document.dispose();
+      return count;
+    } catch (_) {
+      return 1;
+    }
+  }
+
   /// Compress PDF by optimizing embedded image streams and setting compression levels
   static Future<CompressedPdfResult> compressPdf({
     required String pdfPath,
@@ -56,7 +68,7 @@ class PdfCompressorService {
 
     final document = sf.PdfDocument(inputBytes: originalBytes);
     
-    // Set maximum stream compression
+    // Set stream compression
     document.compressionLevel = sf.PdfCompressionLevel.best;
 
     final List<int> compressedData = document.saveSync();
@@ -64,7 +76,8 @@ class PdfCompressorService {
 
     final targetDir = outputDirectory ?? (await getTemporaryDirectory()).path;
     final fileName = p.basename(pdfPath);
-    final outputPath = p.join(targetDir, 'compressed_${DateTime.now().millisecondsSinceEpoch}_$fileName');
+    final baseName = p.basenameWithoutExtension(fileName);
+    final outputPath = p.join(targetDir, '${baseName}_compressed.pdf');
 
     final outputFile = File(outputPath);
     await outputFile.writeAsBytes(compressedData, flush: true);

@@ -27,14 +27,15 @@ class PdfGeneratorService {
       author: 'Photo-to-PDF Maker Studio',
     );
 
-    final margin = config.marginPreset == PageMarginPreset.none
-        ? 0.0
-        : (config.marginPreset == PageMarginPreset.narrow
-            ? 14.17
-            : (config.marginPreset == PageMarginPreset.wide ? 56.70 : 28.35));
+    final marginPt = config.marginPt;
+    final spacingPt = config.photoSpacingPt;
 
     final isLandscape = config.orientation == PageOrientation.landscape;
-    final pageFormat = config.pageSizePreset.toPdfFormat(isLandscape: isLandscape);
+    final pageFormat = config.pageSizePreset.toPdfFormat(
+      isLandscape: isLandscape,
+      customWidthMm: config.customWidthMm,
+      customHeightMm: config.customHeightMm,
+    );
 
     final photosPerPage = config.layout.photosPerPage;
     final totalPages = (photos.length / photosPerPage).ceil();
@@ -58,7 +59,7 @@ class PdfGeneratorService {
       pdf.addPage(
         pw.Page(
           pageFormat: pageFormat,
-          margin: pw.EdgeInsets.all(margin),
+          margin: pw.EdgeInsets.all(marginPt),
           build: (pw.Context context) {
             return pw.Stack(
               children: [
@@ -66,7 +67,7 @@ class PdfGeneratorService {
                 _buildPhotoLayout(
                   images: processedImages,
                   layout: config.layout,
-                  spacing: config.imageSpacingPt,
+                  spacing: spacingPt,
                   fit: config.imageFit == fw.BoxFit.cover
                       ? pw.BoxFit.cover
                       : pw.BoxFit.contain,

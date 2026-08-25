@@ -359,6 +359,44 @@ class PhotoToPdfController extends StateNotifier<PhotoToPdfState> {
     state = state.copyWith(photos: updated);
   }
 
+  /// Rotate photo 90 degrees counter-clockwise (CCW)
+  void rotatePhotoCounterClockwise(String id) {
+    _pushUndoState();
+    final updated = state.photos.map((p) {
+      if (p.id == id) {
+        return p.copyWith(
+          rotationDegrees: (p.rotationDegrees - 90 + 360) % 360,
+        );
+      }
+      return p;
+    }).toList();
+    state = state.copyWith(photos: updated);
+  }
+
+  /// Replace photo with cropped version (records in undo stack)
+  Future<void> replacePhotoAfterCrop({
+    required String id,
+    required String newCroppedPath,
+    required Uint8List newCroppedBytes,
+    required int newWidth,
+    required int newHeight,
+  }) async {
+    _pushUndoState();
+    final updated = state.photos.map((p) {
+      if (p.id == id) {
+        return p.copyWith(
+          path: newCroppedPath,
+          cachedBytes: newCroppedBytes,
+          width: newWidth,
+          height: newHeight,
+          originalSizeBytes: newCroppedBytes.lengthInBytes,
+        );
+      }
+      return p;
+    }).toList();
+    state = state.copyWith(photos: updated);
+  }
+
   /// Flip photo horizontally
   void flipPhotoHorizontal(String id) {
     _pushUndoState();

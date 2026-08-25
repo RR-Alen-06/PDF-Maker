@@ -1,15 +1,16 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pdf_maker/core/constants/page_sizes.dart';
 
 @immutable
 class PdfExportConfig {
   final PageSizePreset pageSizePreset;
-  final double customWidth;
-  final double customHeight;
+  final double customWidthMm; // 50 to 1189 mm
+  final double customHeightMm; // 50 to 1189 mm
   final PageOrientation orientation;
-  final PageMarginPreset marginPreset;
-  final double customMarginPt;
-  final double imageSpacingPt;
+  final double marginMm; // 0 to 50 mm
+  final double photoSpacingMm; // 0 to 20 mm
   final PdfPhotoLayout layout;
   final ImageQualityPreset qualityPreset;
   final BoxFit imageFit; // contain / cover
@@ -30,12 +31,11 @@ class PdfExportConfig {
 
   const PdfExportConfig({
     this.pageSizePreset = PageSizePreset.a4,
-    this.customWidth = 595.28,
-    this.customHeight = 841.89,
+    this.customWidthMm = 210.0,
+    this.customHeightMm = 297.0,
     this.orientation = PageOrientation.portrait,
-    this.marginPreset = PageMarginPreset.narrow,
-    this.customMarginPt = 14.17,
-    this.imageSpacingPt = 8.0,
+    this.marginMm = 5.0,
+    this.photoSpacingMm = 3.0,
     this.layout = PdfPhotoLayout.onePerPage,
     this.qualityPreset = ImageQualityPreset.high,
     this.imageFit = BoxFit.contain,
@@ -51,14 +51,19 @@ class PdfExportConfig {
     this.ownerPassword,
   });
 
+  /// Convert margin in mm to points (1 mm = 2.83465 pt)
+  double get marginPt => marginMm * 2.83465;
+
+  /// Convert photo spacing in mm to points (1 mm = 2.83465 pt)
+  double get photoSpacingPt => photoSpacingMm * 2.83465;
+
   PdfExportConfig copyWith({
     PageSizePreset? pageSizePreset,
-    double? customWidth,
-    double? customHeight,
+    double? customWidthMm,
+    double? customHeightMm,
     PageOrientation? orientation,
-    PageMarginPreset? marginPreset,
-    double? customMarginPt,
-    double? imageSpacingPt,
+    double? marginMm,
+    double? photoSpacingMm,
     PdfPhotoLayout? layout,
     ImageQualityPreset? qualityPreset,
     BoxFit? imageFit,
@@ -75,12 +80,11 @@ class PdfExportConfig {
   }) {
     return PdfExportConfig(
       pageSizePreset: pageSizePreset ?? this.pageSizePreset,
-      customWidth: customWidth ?? this.customWidth,
-      customHeight: customHeight ?? this.customHeight,
+      customWidthMm: customWidthMm ?? this.customWidthMm,
+      customHeightMm: customHeightMm ?? this.customHeightMm,
       orientation: orientation ?? this.orientation,
-      marginPreset: marginPreset ?? this.marginPreset,
-      customMarginPt: customMarginPt ?? this.customMarginPt,
-      imageSpacingPt: imageSpacingPt ?? this.imageSpacingPt,
+      marginMm: marginMm ?? this.marginMm,
+      photoSpacingMm: photoSpacingMm ?? this.photoSpacingMm,
       layout: layout ?? this.layout,
       qualityPreset: qualityPreset ?? this.qualityPreset,
       imageFit: imageFit ?? this.imageFit,
@@ -96,5 +100,71 @@ class PdfExportConfig {
       userPassword: userPassword ?? this.userPassword,
       ownerPassword: ownerPassword ?? this.ownerPassword,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'pageSizePreset': pageSizePreset.name,
+      'customWidthMm': customWidthMm,
+      'customHeightMm': customHeightMm,
+      'orientation': orientation.name,
+      'marginMm': marginMm,
+      'photoSpacingMm': photoSpacingMm,
+      'layout': layout.name,
+      'qualityPreset': qualityPreset.name,
+      'includePageNumbers': includePageNumbers,
+      'watermarkText': watermarkText,
+      'headerText': headerText,
+      'footerText': footerText,
+    };
+  }
+
+  factory PdfExportConfig.fromJson(Map<String, dynamic> json) {
+    return PdfExportConfig(
+      pageSizePreset: PageSizePreset.values.firstWhere(
+        (e) => e.name == json['pageSizePreset'],
+        orElse: () => PageSizePreset.a4,
+      ),
+      customWidthMm: (json['customWidthMm'] as num?)?.toDouble() ?? 210.0,
+      customHeightMm: (json['customHeightMm'] as num?)?.toDouble() ?? 297.0,
+      orientation: PageOrientation.values.firstWhere(
+        (e) => e.name == json['orientation'],
+        orElse: () => PageOrientation.portrait,
+      ),
+      marginMm: (json['marginMm'] as num?)?.toDouble() ?? 5.0,
+      photoSpacingMm: (json['photoSpacingMm'] as num?)?.toDouble() ?? 3.0,
+      layout: PdfPhotoLayout.values.firstWhere(
+        (e) => e.name == json['layout'],
+        orElse: () => PdfPhotoLayout.onePerPage,
+      ),
+      qualityPreset: ImageQualityPreset.values.firstWhere(
+        (e) => e.name == json['qualityPreset'],
+        orElse: () => ImageQualityPreset.high,
+      ),
+      includePageNumbers: json['includePageNumbers'] as bool? ?? true,
+      watermarkText: json['watermarkText'] as String?,
+      headerText: json['headerText'] as String?,
+      footerText: json['footerText'] as String?,
+    );
+  }
+
+  /// Save page setup configuration to shared preferences
+  static Future<void> saveToPreferences(PdfExportConfig config) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = jsonEncode(config.toJson());
+    await prefs.setString('pdf_maker_page_setup', jsonStr);
+  }
+
+  /// Load page setup configuration from shared preferences
+  static Future<PdfExportConfig> loadFromPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('pdf_maker_page_setup');
+    if (jsonStr != null) {
+      try {
+        final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
+        return PdfExportConfig.fromJson(decoded);
+      } catch (_) {}
+    }
+    return const PdfExportConfig();
   }
 }

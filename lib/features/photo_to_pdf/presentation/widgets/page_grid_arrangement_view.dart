@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/constants/page_sizes.dart';
 import 'package:pdf_maker/features/photo_to_pdf/domain/models/photo_item.dart';
@@ -9,8 +8,11 @@ class PageGridArrangementView extends StatelessWidget {
   final List<PhotoItem> photos;
   final PdfPhotoLayout layout;
   final void Function(int oldIndex, int newIndex) onReorder;
-  final void Function(PhotoItem item) onRotate;
+  final void Function(PhotoItem item) onCrop;
+  final void Function(PhotoItem item) onRotateCW;
+  final void Function(PhotoItem item) onRotateCCW;
   final void Function(PhotoItem item) onFlipHorizontal;
+  final void Function(PhotoItem item) onFlipVertical;
   final void Function(PhotoItem item) onFilterTap;
   final void Function(PhotoItem item) onDelete;
 
@@ -19,11 +21,98 @@ class PageGridArrangementView extends StatelessWidget {
     required this.photos,
     required this.layout,
     required this.onReorder,
-    required this.onRotate,
+    required this.onCrop,
+    required this.onRotateCW,
+    required this.onRotateCCW,
     required this.onFlipHorizontal,
+    required this.onFlipVertical,
     required this.onFilterTap,
     required this.onDelete,
   });
+
+  void _showPhotoEditMenu(BuildContext context, PhotoItem item) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.edit_note_rounded, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Edit Photo',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  leading: const Icon(Icons.crop_rounded, color: AppColors.primary),
+                  title: const Text('Crop (Free, 1:1, 4:3, 16:9)'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onCrop(item);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.rotate_right_rounded),
+                  title: const Text('Rotate 90° CW'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onRotateCW(item);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.rotate_left_rounded),
+                  title: const Text('Rotate 90° CCW'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onRotateCCW(item);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.flip_rounded),
+                  title: const Text('Flip Horizontal'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onFlipHorizontal(item);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.swap_vert_rounded),
+                  title: const Text('Flip Vertical'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onFlipVertical(item);
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
+                  title: const Text('Remove Photo', style: TextStyle(color: AppColors.error)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    onDelete(item);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,7 +156,7 @@ class PageGridArrangementView extends StatelessWidget {
                         const SizedBox(width: 6),
                         Text(
                           'PDF Page ${pageIndex + 1} of $totalPages',
-                          style: GoogleFonts.sora(
+                          style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.bold,
                             color: isDark ? Colors.white : AppColors.textPrimaryLight,
@@ -83,7 +172,7 @@ class PageGridArrangementView extends StatelessWidget {
                       ),
                       child: Text(
                         '${pagePhotos.length}/$photosPerPage Slots',
-                        style: GoogleFonts.jetBrainsMono(
+                        style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
                           color: AppColors.primary,
@@ -220,89 +309,98 @@ class PageGridArrangementView extends StatelessWidget {
     required int globalIndex,
     required bool isDark,
   }) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.surfaceContainerDark : AppColors.surfaceContainerLight,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isDark ? AppColors.borderDark : AppColors.borderLight,
-        ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Photo preview with transforms
-          Transform.rotate(
-            angle: item.rotationDegrees * (3.141592653589793 / 180),
-            child: Transform(
-              alignment: Alignment.center,
-              transform: Matrix4.diagonal3Values(
-                item.isFlippedHorizontally ? -1.0 : 1.0,
-                item.isFlippedVertically ? -1.0 : 1.0,
-                1.0,
-              ),
-              child: item.cachedBytes != null
-                  ? Image.memory(item.cachedBytes!, fit: BoxFit.cover)
-                  : Image.file(File(item.path), fit: BoxFit.cover),
-            ),
+    return InkWell(
+      onTap: () => _showPhotoEditMenu(context, item),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.surfaceContainerDark : AppColors.surfaceContainerLight,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isDark ? AppColors.borderDark : AppColors.borderLight,
           ),
-
-          // Photo Index Badge
-          Positioned(
-            top: 6,
-            left: 6,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.75),
-                borderRadius: BorderRadius.circular(6),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Photo preview with transforms
+            Transform.rotate(
+              angle: item.rotationDegrees * (3.141592653589793 / 180),
+              child: Transform(
+                alignment: Alignment.center,
+                transform: Matrix4.diagonal3Values(
+                  item.isFlippedHorizontally ? -1.0 : 1.0,
+                  item.isFlippedVertically ? -1.0 : 1.0,
+                  1.0,
+                ),
+                child: item.cachedBytes != null
+                    ? Image.memory(item.cachedBytes!, fit: BoxFit.cover)
+                    : Image.file(File(item.path), fit: BoxFit.cover),
               ),
-              child: Text(
-                '#${globalIndex + 1}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+            ),
+
+            // Photo Index Badge
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  '#${globalIndex + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
             ),
-          ),
 
-          // Quick Action Overlay
-          Positioned(
-            bottom: 4,
-            right: 4,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildMiniAction(
-                    icon: Icons.rotate_right_rounded,
-                    tooltip: 'Rotate',
-                    onTap: () => onRotate(item),
-                  ),
-                  _buildMiniAction(
-                    icon: Icons.auto_fix_high_rounded,
-                    tooltip: 'Filter',
-                    onTap: () => onFilterTap(item),
-                  ),
-                  _buildMiniAction(
-                    icon: Icons.delete_outline_rounded,
-                    tooltip: 'Remove',
-                    color: AppColors.error,
-                    onTap: () => onDelete(item),
-                  ),
-                ],
+            // Quick Action Overlay
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildMiniAction(
+                      icon: Icons.crop_rounded,
+                      tooltip: 'Crop',
+                      onTap: () => onCrop(item),
+                    ),
+                    _buildMiniAction(
+                      icon: Icons.rotate_right_rounded,
+                      tooltip: 'Rotate CW',
+                      onTap: () => onRotateCW(item),
+                    ),
+                    _buildMiniAction(
+                      icon: Icons.auto_fix_high_rounded,
+                      tooltip: 'Filter',
+                      onTap: () => onFilterTap(item),
+                    ),
+                    _buildMiniAction(
+                      icon: Icons.delete_outline_rounded,
+                      tooltip: 'Remove',
+                      color: AppColors.error,
+                      onTap: () => onDelete(item),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

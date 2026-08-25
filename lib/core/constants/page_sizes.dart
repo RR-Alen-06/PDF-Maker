@@ -7,7 +7,7 @@ enum PageSizePreset {
   a3('A3', 841.89, 1190.55),
   a5('A5', 419.53, 595.28),
   businessCard('Business Card (3.5x2")', 252.0, 144.0),
-  custom('Custom', 0, 0);
+  custom('Custom (mm)', 0, 0);
 
   final String label;
   final double width;
@@ -15,11 +15,18 @@ enum PageSizePreset {
 
   const PageSizePreset(this.label, this.width, this.height);
 
-  PdfPageFormat toPdfFormat({bool isLandscape = false}) {
+  PdfPageFormat toPdfFormat({
+    bool isLandscape = false,
+    double customWidthMm = 210.0,
+    double customHeightMm = 297.0,
+  }) {
     if (this == PageSizePreset.custom) {
+      // Convert mm to points (1 mm = 2.83465 pt)
+      final wPt = customWidthMm * 2.83465;
+      final hPt = customHeightMm * 2.83465;
       return isLandscape
-          ? const PdfPageFormat(841.89, 595.28)
-          : const PdfPageFormat(595.28, 841.89);
+          ? PdfPageFormat(hPt, wPt)
+          : PdfPageFormat(wPt, hPt);
     }
     return isLandscape
         ? PdfPageFormat(height, width)
@@ -40,7 +47,8 @@ enum PageMarginPreset {
   none('None (0 mm)', 0.0),
   narrow('Narrow (5 mm)', 14.17),
   normal('Normal (10 mm)', 28.35),
-  wide('Wide (20 mm)', 56.70);
+  wide('Wide (20 mm)', 56.70),
+  custom('Custom', 0.0);
 
   final String label;
   final double ptValue;

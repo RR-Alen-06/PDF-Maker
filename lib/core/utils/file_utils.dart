@@ -118,12 +118,13 @@ class FileUtils {
     return await file.writeAsBytes(bytes, flush: true);
   }
 
-  /// Open PDF in default external PDF reader application
-  static Future<void> openPdf(String filePath) async {
-    await OpenFilex.open(filePath);
+  /// Open PDF in default external PDF reader application.
+  /// Returns OpenResult to inspect success or failure.
+  static Future<OpenResult> openPdf(String filePath) async {
+    return await OpenFilex.open(filePath);
   }
 
-  /// Trigger native share sheet for the PDF file
+  /// Trigger native share sheet for the PDF file without file-size limits
   static Future<void> sharePdf(String filePath, {String? text}) async {
     await SharePlus.instance.share(
       ShareParams(

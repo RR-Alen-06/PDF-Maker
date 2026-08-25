@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:path/path.dart' as p;
 import 'package:pdf_maker/core/constants/app_colors.dart';
 import 'package:pdf_maker/core/utils/file_utils.dart';
 import 'package:pdf_maker/features/history_and_settings/services/history_storage_service.dart';
@@ -15,9 +17,14 @@ class PdfCompressorScreen extends StatefulWidget {
 
 class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
   String? _selectedPdfPath;
+  int _originalSizeBytes = 0;
+  int _pageCount = 1;
+  bool _hasSelectableText = false;
   CompressedPdfResult? _result;
   double _quality = 65.0;
   bool _isCompressing = false;
+  int _estimatedOutputSize = 0;
+  String? _compressionStatusMessage;
 
   Future<void> _pickPdf() async {
     final files = await FilePicker.pickFiles(
@@ -25,17 +32,80 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
       allowedExtensions: ['pdf'],
     );
     if (files.isNotEmpty && files.first.path != null) {
+      final path = files.first.path!;
+      final file = File(path);
+      final bytes = await file.readAsBytes();
+      final textDetected = await PdfCompressorService.detectSelectableText(bytes);
+      final pages = await PdfCompressorService.getPageCount(bytes);
+
       setState(() {
-        _selectedPdfPath = files.first.path;
+        _selectedPdfPath = path;
+        _originalSizeBytes = bytes.lengthInBytes;
+        _pageCount = pages;
+        _hasSelectableText = textDetected;
         _result = null;
+        _compressionStatusMessage = null;
+        _estimatedOutputSize = (_originalSizeBytes * (_quality / 100.0) * 0.75).round();
       });
-      _runCompression();
+
+      if (_hasSelectableText) {
+        _showTextWarningDialog();
+      } else {
+        _runCompression();
+      }
     }
+  }
+
+  void _showTextWarningDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: AppColors.tertiary, size: 28),
+            const SizedBox(width: 8),
+            Text(
+              'Selectable Text Found',
+              style: GoogleFonts.sora(fontWeight: FontWeight.bold, fontSize: 17),
+            ),
+          ],
+        ),
+        content: const Text(
+          'This PDF contains selectable text. Compression will flatten it into images, making text non-selectable. Proceed?',
+          style: TextStyle(fontSize: 14, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _runCompression();
+            },
+            child: const Text('Proceed'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onQualityChanged(double val) {
+    setState(() {
+      _quality = val;
+      _estimatedOutputSize = (_originalSizeBytes * (_quality / 100.0) * 0.75).round();
+    });
   }
 
   Future<void> _runCompression() async {
     if (_selectedPdfPath == null) return;
-    setState(() => _isCompressing = true);
+    setState(() {
+      _isCompressing = true;
+      _compressionStatusMessage = null;
+    });
 
     try {
       final res = await PdfCompressorService.compressPdf(
@@ -43,9 +113,21 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
         imageQuality: _quality.round(),
       );
 
+      // Acceptance Criteria: If compressed file is larger than or equal to original, inform user and do not save
+      if (res.compressedSizeBytes >= res.originalSizeBytes) {
+        setState(() {
+          _result = null;
+          _isCompressing = false;
+          _compressionStatusMessage =
+              'The PDF could not be reduced further at this quality setting.';
+        });
+        return;
+      }
+
       setState(() {
         _result = res;
         _isCompressing = false;
+        _compressionStatusMessage = null;
       });
     } catch (e) {
       setState(() => _isCompressing = false);
@@ -61,26 +143,29 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
   }
 
   Future<void> _saveCompressedPdf() async {
-    if (_result == null) return;
+    if (_result == null || _selectedPdfPath == null) return;
     try {
-      final fileName = 'Compressed_${_result!.outputPath.split(Platform.pathSeparator).last}';
+      final originalFileName = p.basename(_selectedPdfPath!);
+      final baseName = p.basenameWithoutExtension(originalFileName);
+      final finalFileName = '${baseName}_compressed.pdf';
+
       final file = await FileUtils.savePdfFile(
         bytes: _result!.compressedBytes,
-        fileName: fileName,
+        fileName: finalFileName,
       );
 
       final history = HistoryStorageService();
       await history.addHistoryItem(
-        title: fileName,
+        title: finalFileName,
         filePath: file.path,
         fileSizeBytes: _result!.compressedSizeBytes,
-        pageCount: 1,
+        pageCount: _pageCount,
       );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Saved to ${file.path.split(Platform.pathSeparator).last}'),
+            content: Text('Saved as $finalFileName'),
             backgroundColor: AppColors.success,
             action: SnackBarAction(
               label: 'Open',
@@ -136,13 +221,13 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    const Text(
+                    Text(
                       'Compress Existing PDF',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      style: GoogleFonts.sora(fontSize: 20, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Pick any PDF on your device to shrink its file size while maintaining visual quality.',
+                      'Pick exactly one PDF to shrink its file size while maintaining visual clarity.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey),
                     ),
@@ -158,13 +243,13 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
             )
           : Column(
               children: [
-                // File & Quality Card
+                // Metadata & Quality Card
                 Container(
                   margin: const EdgeInsets.all(16),
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
                     color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(18),
                     border: Border.all(
                       color: Theme.of(context).dividerColor.withValues(alpha: 0.15),
                     ),
@@ -177,11 +262,24 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
                           const Icon(Icons.description_rounded, color: AppColors.primary),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: Text(
-                              _selectedPdfPath!.split(Platform.pathSeparator).last,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  p.basename(_selectedPdfPath!),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${FileUtils.formatBytes(_originalSizeBytes)} • $_pageCount ${_pageCount == 1 ? "page" : "pages"}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(context).textTheme.bodySmall?.color,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           TextButton(
@@ -190,36 +288,37 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const Divider(height: 20),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text(
-                            'Quality Level',
+                            'Image Quality',
                             style: TextStyle(fontWeight: FontWeight.w600),
                           ),
                           Text(
-                            '${_quality.round()}%',
+                            '${_quality.round()}% (Est. ~${FileUtils.formatBytes(_estimatedOutputSize)})',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               color: AppColors.primary,
+                              fontSize: 13,
                             ),
                           ),
                         ],
                       ),
                       Slider(
                         value: _quality,
-                        min: 20,
-                        max: 95,
-                        divisions: 15,
-                        onChanged: (val) => setState(() => _quality = val),
+                        min: 10,
+                        max: 100,
+                        divisions: 18,
+                        onChanged: _onQualityChanged,
                         onChangeEnd: (_) => _runCompression(),
                       ),
                     ],
                   ),
                 ),
 
-                // Compression Results Card
+                // Compression Results or Inability to Reduce Message
                 if (_isCompressing)
                   const Expanded(
                     child: Center(
@@ -228,7 +327,31 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
                         children: [
                           CircularProgressIndicator(),
                           SizedBox(height: 16),
-                          Text('Compressing PDF streams...'),
+                          Text('Compressing PDF streams…'),
+                        ],
+                      ),
+                    ),
+                  )
+                else if (_compressionStatusMessage != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppColors.tertiary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.tertiary.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline_rounded, color: AppColors.tertiary),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _compressionStatusMessage!,
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -237,6 +360,7 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Card(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                       child: Padding(
                         padding: const EdgeInsets.all(16),
                         child: Column(
@@ -318,7 +442,7 @@ class _PdfCompressorScreenState extends State<PdfCompressorScreen> {
                     child: ElevatedButton.icon(
                       onPressed: _saveCompressedPdf,
                       icon: const Icon(Icons.save_alt_rounded),
-                      label: const Text('Save PDF'),
+                      label: const Text('Save as <name>_compressed.pdf'),
                     ),
                   ),
                 ],
