@@ -94,6 +94,20 @@ lib/
 
 ---
 
+## 🧪 Running Tests & Analysis
+
+```bash
+# Static analysis
+flutter analyze
+
+# Run all unit, widget, and integration tests
+flutter test
+```
+
+For architecture and design notes, see [`DESIGN.md`](./DESIGN.md) and [`DEFERRED.md`](./DEFERRED.md).
+
+---
+
 ## 📄 License & Attribution
 
 This project is licensed under the terms described in [LICENSES.md](LICENSES.md).
